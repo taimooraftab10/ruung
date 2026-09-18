@@ -1,0 +1,13 @@
+# Render.com blueprint — free tier web service with WebSocket support.
+# See README for the click-by-click steps.
+services:
+  - type: web
+    name: ruung
+    runtime: node
+    plan: free
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22.11.0"
