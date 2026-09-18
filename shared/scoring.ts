@@ -19,26 +19,26 @@ import { RoundKind, ScoreState, Team, TrickResult } from "./types";
  *      the rounds below") cannot COMPLETE on trick 12. So winning 11 & 12 does
  *      not clinch; carrying the streak to trick 13 does.
  *
- *  Rule 5 — Seniority / "consecutive 2":
- *      Scoring begins from trick 4. Seniority is PER PLAYER: the SAME player
- *      must win TWO CONSECUTIVE tricks (earliest = 4th & 5th) to break through.
- *      If a player wins a trick and then their partner wins the next, the
- *      streak resets (it must be the same person twice in a row). The FIRST
- *      breakthrough retroactively credits that player's TEAM with ALL tricks so
- *      far (e.g. breaking through on trick 5 => credited 5). After the first
- *      breakthrough, each further trick won while the streak continues adds 1.
- *      Losing/handing off the streak breaks it; the player must win 2-in-a-row
- *      again before crediting resumes (no second retroactive bonus).
+ *  Rule 5 — Seniority / "consecutive 2" as an ON-BOARD pile:
+ *      Think of every played trick as sitting "on the board" until someone
+ *      claims it. Seniority is PER PLAYER: the SAME player must win TWO
+ *      CONSECUTIVE tricks (earliest = 4th & 5th) to CLINCH, which sweeps ALL
+ *      tricks currently on the board to that player's team. (Partner winning
+ *      the next trick resets the streak — must be the same person twice.)
+ *      While the streak continues, each further win sweeps the one new trick.
+ *      If the streak breaks with the board unclaimed, those tricks stay on the
+ *      board until the next clinch — by either team — sweeps them.
  *
  *  Rule 6 — The Ace (wins the trick, but doesn't score):
  *      A trick physically won with an Ace keeps the streak ALIVE (seniority),
  *      but does NOT count as a scoring trick — EXCEPT on the final trick (13),
  *      where the Ace both wins and scores.
  *
- *  Rule 7 — The last trick is decisive on its own:
+ *  Rule 7 — The last trick sweeps the board:
  *      On trick 13 the consecutive-2 requirement is waived. Whoever wins the
- *      last trick (with the strongest card — trump beats all, else the Ace)
- *      clinches "all 13" even without a streak.
+ *      last trick (strongest card — trump beats all, else the Ace) sweeps every
+ *      trick still ON THE BOARD. If 7 were already claimed, the last trick wins
+ *      the remaining 6; if none were claimed, it wins all 13.
  *
  *  NOTE (open edge case, flagged with the user):
  *      When an Ace "bridges" a streak (e.g. win 4 with K, 5 with A, 6 with a
@@ -66,7 +66,7 @@ export function isScoringWin(t: TrickResult): boolean {
 export function emptyScore(): ScoreState {
   return {
     credited: [0, 0],
-    brokenThrough: [false, false],
+    claimed: 0,
     seniorSeat: null,
     streakLen: 0,
   };
@@ -89,20 +89,22 @@ export function computeScore(results: TrickResult[]): ScoreState {
       s.streakLen = 1;
     }
 
-    // ---- crediting (to the winning player's team) --------------------------
-    // On the LAST trick (13) the consecutive-2 requirement is waived: simply
-    // winning it clinches. Otherwise you need the same player 2-in-a-row.
-    const streakOk = t.trickNumber === 13 ? s.streakLen >= 1 : s.streakLen >= 2;
-    if (streakOk && isScoringWin(t)) {
-      if (!s.brokenThrough[team]) {
-        // First breakthrough: retroactively credit all tricks so far — but this
-        // cannot happen ON trick 12 (the streak still carries to trick 13).
-        if (t.trickNumber !== NO_CLINCH_TRICK) {
-          s.credited[team] += t.trickNumber;
-          s.brokenThrough[team] = true;
-        }
-      } else {
-        s.credited[team] += 1;
+    // ---- can this trick CLINCH (sweep the board)? --------------------------
+    let canClinch: boolean;
+    if (t.trickNumber === 13) {
+      canClinch = s.streakLen >= 1; // last trick: just winning it sweeps the board
+    } else if (t.trickNumber === NO_CLINCH_TRICK) {
+      canClinch = false; // trick 12 never clinches (streak still carries on)
+    } else {
+      canClinch = s.streakLen >= 2 && isScoringWin(t); // 2-in-a-row; Ace/wasted don't clinch
+    }
+
+    // ---- sweep everything still on the board to the winner's team ----------
+    if (canClinch) {
+      const gain = t.trickNumber - s.claimed; // tricks played but not yet claimed
+      if (gain > 0) {
+        s.credited[team] += gain;
+        s.claimed = t.trickNumber;
       }
     }
   }

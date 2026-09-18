@@ -61,8 +61,8 @@ export interface PlayerPublic {
 // ---- Scoring snapshot (recomputed each trick) ------------------------------
 
 export interface ScoreState {
-  credited: [number, number]; // credited tricks per team
-  brokenThrough: [boolean, boolean]; // has team had its first "consecutive 2" breakthrough
+  credited: [number, number]; // tricks claimed per team
+  claimed: number; // total tricks claimed by either team so far (rest are "on the board")
   seniorSeat: number | null; // the PLAYER currently on a consecutive-win streak
   streakLen: number; // current consecutive-trick streak length (same player)
 }

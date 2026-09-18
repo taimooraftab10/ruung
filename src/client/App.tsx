@@ -588,10 +588,14 @@ function ScorePanel({ view }: { view: ClientView }) {
   return (
     <div className="card-panel score">
       <div className="score-row">
-        <span>Credited tricks</span>
+        <span>Won tricks</span>
         <strong>
           Us {s.credited[youTeam(view)]} · Them {s.credited[oppTeam(view)]}
         </strong>
+      </div>
+      <div className="score-row small muted">
+        <span>On the board (unclaimed)</span>
+        <span>{view.trickResults.length - s.claimed}</span>
       </div>
       <div className="score-row small muted">
         <span>
