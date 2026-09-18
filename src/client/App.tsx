@@ -1,7 +1,14 @@
-import { useEffect, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { useGame } from "./net";
 import { cardLabel, SUIT_LABEL, SUIT_NAME } from "../../shared/deck";
 import { Card, ClientView, Suit, SUITS, teamOfSeat } from "../../shared/types";
+import {
+  isMuted,
+  playCardSound,
+  playTurnChime,
+  setMuted,
+  unlockAudio,
+} from "./sound";
 
 // ---------------------------------------------------------------------------
 //  Room + name bootstrap
@@ -102,6 +109,32 @@ function Landing({ onStart }: { onStart: (name: string, room: string) => void })
 function Game({ roomId, name }: { roomId: string; name: string }) {
   const net = useGame(roomId, name);
   const { view, error, connected } = net;
+  const wasYourTurn = useRef(false);
+  const cardsPlayed = useRef(0);
+
+  // Allow audio after the first tap anywhere (browsers block it until then).
+  useEffect(() => {
+    const unlock = () => unlockAudio();
+    window.addEventListener("pointerdown", unlock, { once: true });
+    return () => window.removeEventListener("pointerdown", unlock);
+  }, []);
+
+  // Chime when it becomes your turn (in the auction or in play).
+  const active =
+    !!view &&
+    ((view.phase === "playing" && view.turnSeat === view.youSeat) ||
+      (view.phase === "auction" && view.auctionTurnSeat === view.youSeat));
+  useEffect(() => {
+    if (active && !wasYourTurn.current) playTurnChime();
+    wasYourTurn.current = active;
+  }, [active]);
+
+  // Click when any card is played (count total cards = finished tricks * 4 + current).
+  const total = view ? view.trickResults.length * 4 + view.currentTrick.length : 0;
+  useEffect(() => {
+    if (total > cardsPlayed.current) playCardSound();
+    cardsPlayed.current = total;
+  }, [total]);
 
   useEffect(() => {
     if (!error) return;
@@ -135,8 +168,14 @@ function Game({ roomId, name }: { roomId: string; name: string }) {
 // ---------------------------------------------------------------------------
 
 function Header({ view, roomId }: { view: ClientView; roomId: string }) {
+  const [muted, setMutedState] = useState(isMuted());
   const copyLink = () => {
     navigator.clipboard?.writeText(`${window.location.origin}/#${roomId}`);
+  };
+  const toggleMute = () => {
+    const m = !muted;
+    setMuted(m);
+    setMutedState(m);
   };
   return (
     <header className="header">
@@ -147,6 +186,9 @@ function Header({ view, roomId }: { view: ClientView; roomId: string }) {
         </button>
       </div>
       <div className="row gap center-v">
+        <button className="chip" onClick={toggleMute} title="Sound on/off">
+          {muted ? "🔇" : "🔊"}
+        </button>
         {view.round > 0 && <span className="chip">Round {view.round}</span>}
         {view.trump && (
           <span className={`chip suit-${view.trump}`}>
@@ -260,12 +302,51 @@ function Auction({
   const yourTurn = view.auctionTurnSeat === view.youSeat;
   const minCount = view.currentBid ? view.currentBid.count : 0;
   const counts: (7 | 10 | 13)[] = [7, 10, 13];
+  const mustOpen = !view.currentBid && view.youSeat === view.callerSeat;
+
+  const seatMeta = (seat: number) => {
+    const a = view.auctionActions[seat];
+    if (a === "pass") return <span className="bid-pass">Passed</span>;
+    if (a) return (
+      <span className={`bid-made suit-${a.suit}`}>
+        {a.count} {SUIT_LABEL[a.suit]}
+      </span>
+    );
+    if (seat === view.auctionTurnSeat) return <span className="bid-think">bidding…</span>;
+    return <span className="muted">waiting</span>;
+  };
+
+  const center = view.currentBid ? (
+    <div className="bid-center">
+      <div className="bid-big">
+        {view.currentBid.count}
+        <span className={`suit-${view.currentBid.suit}`}> {SUIT_LABEL[view.currentBid.suit]}</span>
+      </div>
+      <div className="small">on {SUIT_NAME[view.currentBid.suit]}</div>
+      <div className="small muted">{view.players[view.currentBid.seat].name} leads 👑</div>
+    </div>
+  ) : (
+    <div className="bid-center small muted">no bids yet</div>
+  );
 
   return (
     <div className="panel-stack">
+      <div className="table-info">
+        <span className="chip">Round {view.round}</span>
+        <span className="chip">Bidding — one call each</span>
+      </div>
+
+      <PlayerRing
+        view={view}
+        activeSeat={view.auctionTurnSeat}
+        leadingSeat={view.currentBid?.seat ?? null}
+        seatMeta={seatMeta}
+        center={center}
+      />
+
       {view.drawReveal && (
         <div className="card-panel">
-          <h3>Draw for first call</h3>
+          <h3 className="small">Draw for first call</h3>
           <div className="row gap wrap">
             {view.drawReveal.map((d) => (
               <div key={d.seat} className="draw-item">
@@ -277,33 +358,10 @@ function Auction({
               </div>
             ))}
           </div>
-          <p className="muted small">
-            {view.callerSeat !== null && view.players[view.callerSeat].name} drew highest and
-            calls first.
-          </p>
         </div>
       )}
 
       <div className="card-panel">
-        <h2>Bidding</h2>
-        <p className="muted">
-          Current bid:{" "}
-          {view.currentBid ? (
-            <strong>
-              {view.currentBid.count} on {SUIT_NAME[view.currentBid.suit]} ·{" "}
-              {view.players[view.currentBid.seat].name}
-            </strong>
-          ) : (
-            <em>none yet</em>
-          )}
-        </p>
-        <p className="muted small">
-          Turn:{" "}
-          {view.auctionTurnSeat !== null && (
-            <strong>{view.players[view.auctionTurnSeat].name}</strong>
-          )}
-        </p>
-
         <YourHand cards={view.hand} title="Your first 5 cards" />
 
         {yourTurn ? (
@@ -330,27 +388,23 @@ function Auction({
                   Bid {c}
                 </button>
               ))}
-              <button
-                className="btn"
-                disabled={!view.currentBid && view.youSeat === view.callerSeat}
-                onClick={() => send({ type: "pass" })}
-              >
+              <button className="btn" disabled={mustOpen} onClick={() => send({ type: "pass" })}>
                 Pass
               </button>
             </div>
+            <p className="small muted">
+              {mustOpen
+                ? "You called highest in the draw — open the bidding."
+                : "One call each. Calling 13 starts the game right away."}
+            </p>
           </div>
         ) : (
-          <p className="muted">Waiting for others to bid…</p>
+          <p className="muted">
+            Waiting for{" "}
+            {view.auctionTurnSeat !== null ? view.players[view.auctionTurnSeat].name : "…"} to
+            bid…
+          </p>
         )}
-      </div>
-
-      <div className="card-panel log">
-        <h3>Auction log</h3>
-        <ul>
-          {view.auctionLog.slice(-8).map((l, i) => (
-            <li key={i}>{l}</li>
-          ))}
-        </ul>
       </div>
     </div>
   );
@@ -364,6 +418,42 @@ const POS = ["pos-bottom", "pos-left", "pos-top", "pos-right"];
 const relPos = (seat: number, youSeat: number | null) =>
   POS[(seat - (youSeat ?? 0) + 4) % 4];
 
+// Shared ring-of-players table used by both the auction and the play screens.
+function PlayerRing({
+  view,
+  activeSeat,
+  seatMeta,
+  center,
+  leadingSeat = null,
+}: {
+  view: ClientView;
+  activeSeat: number | null;
+  seatMeta: (seat: number) => ReactNode;
+  center: ReactNode;
+  leadingSeat?: number | null;
+}) {
+  return (
+    <div className="table-felt">
+      {view.players.map((p) => (
+        <div
+          key={p.seat}
+          className={`nameplate ${relPos(p.seat, view.youSeat)} team-t${teamOfSeat(p.seat)} ${
+            activeSeat === p.seat ? "active" : ""
+          } ${leadingSeat === p.seat ? "leading" : ""}`}
+        >
+          <div className="np-name">
+            {p.name || <em className="muted">empty</em>}
+            {p.seat === view.youSeat && " (you)"}
+            {p.name && !p.connected && " ⚠"}
+          </div>
+          <div className="np-meta">{seatMeta(p.seat)}</div>
+        </div>
+      ))}
+      <div className="table-center">{center}</div>
+    </div>
+  );
+}
+
 function Play({
   view,
   send,
@@ -375,6 +465,37 @@ function Play({
   const isLegal = (c: Card) =>
     !view.legalCards || view.legalCards.some((l) => l.suit === c.suit && l.rank === c.rank);
 
+  // Keep the finished trick on the table until the next card is played, so the
+  // winning card is visible instead of vanishing the instant the 4th card lands.
+  const showingLast = view.currentTrick.length === 0 && !!view.lastTrick;
+  const shown = view.currentTrick.length > 0 ? view.currentTrick : view.lastTrick?.plays ?? [];
+  const winnerSeat = showingLast ? view.lastTrick!.winnerSeat : null;
+
+  const seatMeta = (seat: number) => (
+    <>
+      Team {teamOfSeat(seat) + 1} · {view.players[seat].handCount}
+      {seat === view.callerSeat && " 👑"}
+    </>
+  );
+
+  const center = (
+    <>
+      {view.players.map((p) => {
+        const play = shown.find((t) => t.seat === p.seat);
+        return (
+          <div
+            key={p.seat}
+            className={`center-slot ${relPos(p.seat, view.youSeat)} ${
+              winnerSeat === p.seat ? "won" : ""
+            }`}
+          >
+            {play ? <PlayingCard card={play.card} /> : <div className="card-ghost sm" />}
+          </div>
+        );
+      })}
+    </>
+  );
+
   return (
     <div className="panel-stack">
       <div className="table-info">
@@ -383,49 +504,7 @@ function Play({
         {view.trump && <span className={`chip suit-${view.trump}`}>Trump {SUIT_LABEL[view.trump]}</span>}
       </div>
 
-      <div className="table-felt">
-        {view.players.map((p) => {
-          const active = view.turnSeat === p.seat;
-          return (
-            <div
-              key={p.seat}
-              className={`nameplate ${relPos(p.seat, view.youSeat)} team-t${teamOfSeat(p.seat)} ${
-                active ? "active" : ""
-              }`}
-            >
-              <div className="np-name">
-                {p.name}
-                {p.seat === view.youSeat && " (you)"}
-                {!p.connected && " ⚠"}
-              </div>
-              <div className="np-meta">
-                Team {teamOfSeat(p.seat) + 1} · {p.handCount} cards
-                {p.seat === view.callerSeat && " · 👑"}
-              </div>
-            </div>
-          );
-        })}
-
-        <div className="table-center">
-          {view.players.map((p) => {
-            const played = view.currentTrick.find((t) => t.seat === p.seat);
-            return (
-              <div key={p.seat} className={`center-slot ${relPos(p.seat, view.youSeat)}`}>
-                {played ? (
-                  <PlayingCard card={played.card} />
-                ) : (
-                  <div className="card-ghost sm" />
-                )}
-              </div>
-            );
-          })}
-          {view.leadSeat !== null && (
-            <div className="center-hint small muted">
-              {yourTurn ? "your turn" : `${view.players[view.turnSeat ?? 0].name}'s turn`}
-            </div>
-          )}
-        </div>
-      </div>
+      <PlayerRing view={view} activeSeat={view.turnSeat} seatMeta={seatMeta} center={center} />
 
       <ScorePanel view={view} />
 

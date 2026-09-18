@@ -32,6 +32,9 @@ export interface Bid {
   suit: Suit;
 }
 
+// Per-seat action during the (single-lap) auction.
+export type SeatAuction = { count: 7 | 10 | 13; suit: Suit } | "pass" | null;
+
 export interface PlayedCard {
   seat: number;
   card: Card;
@@ -80,6 +83,7 @@ export interface ClientView {
   callerSeat: number | null;
   auctionTurnSeat: number | null;
   currentBid: Bid | null;
+  auctionActions: SeatAuction[]; // by seat: their one bid, "pass", or null (not yet)
   auctionLog: string[];
 
   // contract

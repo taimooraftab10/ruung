@@ -5,6 +5,7 @@ import {
   Card,
   ClientView,
   PlayedCard,
+  SeatAuction,
   Suit,
   Team,
   TrickResult,
@@ -35,7 +36,8 @@ export interface GameState {
   // auction
   auctionTurnSeat: number | null;
   currentBid: Bid | null;
-  consecutivePasses: number;
+  auctionActions: SeatAuction[];
+  auctionTurnsTaken: number; // each player gets exactly one chance (max 4)
   auctionLog: string[];
 
   // contract
@@ -70,7 +72,8 @@ export function createGame(roomId: string): GameState {
     callerSeat: null,
     auctionTurnSeat: null,
     currentBid: null,
-    consecutivePasses: 0,
+    auctionActions: [null, null, null, null],
+    auctionTurnsTaken: 0,
     auctionLog: [],
     trump: null,
     contract: null,
@@ -202,7 +205,8 @@ function beginAuction(g: GameState) {
   g.phase = "auction";
   g.auctionTurnSeat = g.callerSeat;
   g.currentBid = null;
-  g.consecutivePasses = 0;
+  g.auctionActions = [null, null, null, null];
+  g.auctionTurnsTaken = 0;
   g.auctionLog = [];
   g.trump = null;
   g.contract = null;
@@ -230,8 +234,16 @@ export function bid(g: GameState, seat: number, count: 7 | 10 | 13, suit: Suit) 
     throw new GameError("Your bid must be higher than the current bid.");
 
   g.currentBid = { seat, count, suit };
-  g.consecutivePasses = 0;
+  g.auctionActions[seat] = { count, suit };
+  g.auctionTurnsTaken += 1;
   g.auctionLog.push(`${g.seats[seat].name} bid ${count} on ${suit}`);
+
+  // 13 is the top call — nobody can beat it, so the auction ends at once.
+  // Otherwise the auction ends once every player has had their single turn.
+  if (count === 13 || g.auctionTurnsTaken >= 4) {
+    finalizeContract(g);
+    return;
+  }
   advanceAuction(g);
 }
 
@@ -241,11 +253,12 @@ export function pass(g: GameState, seat: number) {
   if (!g.currentBid && seat === g.callerSeat)
     throw new GameError("As the caller you must open the bidding.");
 
-  g.consecutivePasses += 1;
+  g.auctionActions[seat] = "pass";
+  g.auctionTurnsTaken += 1;
   g.auctionLog.push(`${g.seats[seat].name} passed`);
 
-  // Auction ends when the three non-bidding players have all passed.
-  if (g.currentBid && g.consecutivePasses >= 3) {
+  // Each player gets exactly one chance; the auction ends after the last one.
+  if (g.auctionTurnsTaken >= 4) {
     finalizeContract(g);
     return;
   }
@@ -411,6 +424,7 @@ export function viewFor(g: GameState, connId: string): ClientView {
     callerSeat: g.callerSeat,
     auctionTurnSeat: g.auctionTurnSeat,
     currentBid: g.currentBid,
+    auctionActions: g.auctionActions,
     auctionLog: g.auctionLog,
     trump: g.trump,
     contract: g.contract,
