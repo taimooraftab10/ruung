@@ -7,14 +7,17 @@ import { WebSocketServer, WebSocket } from "ws";
 import {
   GameError,
   GameState,
+  advanceTrick,
   bid,
   createGame,
   disconnect,
   joinGame,
+  newSeries,
   nextRound,
   pass,
   playCard,
   seatOfConn,
+  setTarget,
   startGame,
   takeSeat,
   viewFor,
@@ -46,6 +49,24 @@ interface Conn {
 
 const games = new Map<string, GameState>();
 const roomConns = new Map<string, Set<Conn>>();
+const pendingAdvance = new Set<string>();
+
+// After a trick completes the game pauses (turnSeat === null). Wait ~1s so
+// everyone sees all four cards, then advance to the next trick / round.
+function scheduleAdvanceIfNeeded(roomId: string) {
+  const g = games.get(roomId);
+  if (!g || g.phase !== "playing" || g.turnSeat !== null) return;
+  if (pendingAdvance.has(roomId)) return;
+  pendingAdvance.add(roomId);
+  setTimeout(() => {
+    pendingAdvance.delete(roomId);
+    const cur = games.get(roomId);
+    if (cur && cur === g) {
+      advanceTrick(cur);
+      broadcast(roomId);
+    }
+  }, 1000);
+}
 
 function getGame(roomId: string): GameState {
   let g = games.get(roomId);
@@ -76,6 +97,12 @@ function handle(g: GameState, connId: string, msg: ClientMessage) {
       break;
     case "takeSeat":
       takeSeat(g, connId, msg.seat);
+      break;
+    case "setTarget":
+      setTarget(g, msg.target);
+      break;
+    case "newSeries":
+      newSeries(g);
       break;
     case "startGame":
       startGame(g);
@@ -123,6 +150,7 @@ wss.on("connection", (ws, req) => {
     try {
       handle(g, conn.id, msg);
       broadcast(roomId);
+      scheduleAdvanceIfNeeded(roomId);
     } catch (err) {
       const message = err instanceof GameError ? err.message : "Something went wrong.";
       if (ws.readyState === WebSocket.OPEN)

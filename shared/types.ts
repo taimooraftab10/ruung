@@ -16,6 +16,9 @@ export const ACE = 14;
 export type Team = 0 | 1; // team 0 = seats 0 & 2, team 1 = seats 1 & 3
 export const teamOfSeat = (seat: number): Team => (seat % 2) as Team;
 
+// A round's result kind and the points it is worth.
+export type RoundKind = "normal" | "court" | "goon-court";
+
 // ---- Game phases -----------------------------------------------------------
 
 export type Phase =
@@ -102,8 +105,10 @@ export interface ClientView {
   // scoring
   score: ScoreState;
 
-  // running match score (rounds won)
+  // running match score (points in the current series)
   matchScore: [number, number];
+  targetScore: number; // points needed to win the series
+  seriesWinner?: Team; // set when phase === "gameOver"
 
   // round result
   roundResult?: {
@@ -112,6 +117,9 @@ export interface ClientView {
     contract: number;
     credited: [number, number];
     contractMade: boolean;
+    sweep: boolean; // winner took all 13 tricks
+    kind: RoundKind;
+    points: number; // points this round awarded to winnerTeam
   };
 
   // legal moves for you right now (client convenience)
@@ -123,11 +131,13 @@ export interface ClientView {
 export type ClientMessage =
   | { type: "join"; name: string }
   | { type: "takeSeat"; seat: number }
+  | { type: "setTarget"; target: number }
   | { type: "startGame" }
   | { type: "bid"; count: 7 | 10 | 13; suit: Suit }
   | { type: "pass" }
   | { type: "playCard"; card: Card }
-  | { type: "nextRound" };
+  | { type: "nextRound" }
+  | { type: "newSeries" };
 
 // ---- Messages: server -> client -------------------------------------------
 

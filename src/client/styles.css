@@ -390,6 +390,27 @@ input:focus {
 .result.lose {
   border-color: var(--red);
 }
+.round-banner {
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  margin: 4px 0 8px;
+  font-size: 1.1rem;
+}
+.round-banner.kind-normal {
+  color: var(--primary);
+}
+.round-banner.kind-court {
+  color: var(--gold);
+  font-size: 1.4rem;
+}
+.round-banner.kind-goon-court {
+  color: var(--red);
+  font-size: 1.4rem;
+}
+.score-big {
+  font-weight: 800;
+  font-size: 1.05rem;
+}
 
 /* ---- Toast ---- */
 .toast {

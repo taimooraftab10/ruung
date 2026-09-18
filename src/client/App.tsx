@@ -159,6 +159,7 @@ function Game({ roomId, name }: { roomId: string; name: string }) {
       {view.phase === "auction" && <Auction view={view} send={net.send} />}
       {view.phase === "playing" && <Play view={view} send={net.send} />}
       {view.phase === "roundOver" && <RoundOver view={view} send={net.send} />}
+      {view.phase === "gameOver" && <GameOver view={view} send={net.send} />}
     </div>
   );
 }
@@ -196,8 +197,8 @@ function Header({ view, roomId }: { view: ClientView; roomId: string }) {
           </span>
         )}
         {view.contract && <span className="chip">Contract {view.contract}</span>}
-        <span className="chip">
-          Us {view.matchScore[youTeam(view)]} · Them {view.matchScore[oppTeam(view)]}
+        <span className="chip" title={`First to ${view.targetScore}`}>
+          Us {view.matchScore[youTeam(view)]} · Them {view.matchScore[oppTeam(view)]} / {view.targetScore}
         </span>
       </div>
     </header>
@@ -266,6 +267,23 @@ function Lobby({
       </div>
 
       <div className="card-panel">
+        <h3>Series length</h3>
+        <p className="muted small">First team to this many points wins the series.</p>
+        <div className="row gap wrap">
+          {[5, 10, 15, 21].map((n) => (
+            <button
+              key={n}
+              className={`btn ${view.targetScore === n ? "primary" : ""}`}
+              onClick={() => send({ type: "setTarget", target: n })}
+            >
+              {n}
+            </button>
+          ))}
+          <span className="chip">First to {view.targetScore}</span>
+        </div>
+      </div>
+
+      <div className="card-panel">
         <h3>Invite friends</h3>
         <p className="muted small">Send this link — anyone who opens it joins this room.</p>
         <div className="row gap">
@@ -281,7 +299,7 @@ function Lobby({
         disabled={seated < 4}
         onClick={() => send({ type: "startGame" })}
       >
-        {seated < 4 ? `Waiting for ${4 - seated} more…` : "Start game"}
+        {seated < 4 ? `Waiting for ${4 - seated} more…` : `Start · first to ${view.targetScore}`}
       </button>
     </div>
   );
@@ -414,7 +432,9 @@ function Auction({
 //  Play
 // ---------------------------------------------------------------------------
 
-const POS = ["pos-bottom", "pos-left", "pos-top", "pos-right"];
+// Anti-clockwise seating: you at the bottom, next player (you+3) to your left,
+// partner (you+2) across the top, previous player (you+1) to your right.
+const POS = ["pos-bottom", "pos-right", "pos-top", "pos-left"];
 const relPos = (seat: number, youSeat: number | null) =>
   POS[(seat - (youSeat ?? 0) + 4) % 4];
 
@@ -470,11 +490,14 @@ function Play({
   const showingLast = view.currentTrick.length === 0 && !!view.lastTrick;
   const shown = view.currentTrick.length > 0 ? view.currentTrick : view.lastTrick?.plays ?? [];
   const winnerSeat = showingLast ? view.lastTrick!.winnerSeat : null;
+  // Crown = who starts the next trick: the last trick's winner during the pause,
+  // otherwise whoever is leading the current trick.
+  const crownSeat = winnerSeat ?? view.leadSeat;
 
   const seatMeta = (seat: number) => (
     <>
       Team {teamOfSeat(seat) + 1} · {view.players[seat].handCount}
-      {seat === view.callerSeat && " 👑"}
+      {seat === crownSeat && " 👑"}
     </>
   );
 
@@ -587,16 +610,28 @@ function RoundOver({
 }) {
   const r = view.roundResult!;
   const weWon = r.winnerTeam === youTeam(view);
+  const banner =
+    r.kind === "court"
+      ? `COURT! +${r.points} points`
+      : r.kind === "goon-court"
+        ? `GOON COURT! +${r.points} points`
+        : `+${r.points} point`;
   return (
     <div className="panel-stack">
       <div className={`card-panel result ${weWon ? "win" : "lose"}`}>
         <h2>{weWon ? "Your team won the round 🎉" : "Other team won the round"}</h2>
+        <div className={`round-banner kind-${r.kind}`}>{banner}</div>
         <p>
           Contract was <strong>{r.contract}</strong>, called by{" "}
-          <strong>Team {r.contractTeam + 1}</strong> — {r.contractMade ? "made ✅" : "failed ❌"}.
+          <strong>Team {r.contractTeam + 1}</strong> — {r.contractMade ? "made ✅" : "failed ❌"}
+          {r.sweep && " · all 13 tricks!"}.
         </p>
         <p className="muted">
           Credited tricks — Team 1: {r.credited[0]} · Team 2: {r.credited[1]}
+        </p>
+        <p className="score-big">
+          Series — Us {view.matchScore[youTeam(view)]} · Them {view.matchScore[oppTeam(view)]}{" "}
+          <span className="muted small">(first to {view.targetScore})</span>
         </p>
         <p className="muted small">
           {view.callerSeat !== null && view.players[view.callerSeat].name} calls Ruung next round.
@@ -604,6 +639,42 @@ function RoundOver({
       </div>
       <button className="btn primary big" onClick={() => send({ type: "nextRound" })}>
         Next round
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+//  Series over
+// ---------------------------------------------------------------------------
+
+function GameOver({
+  view,
+  send,
+}: {
+  view: ClientView;
+  send: ReturnType<typeof useGame>["send"];
+}) {
+  const weWon = view.seriesWinner === youTeam(view);
+  const r = view.roundResult;
+  return (
+    <div className="panel-stack">
+      <div className={`card-panel result ${weWon ? "win" : "lose"}`}>
+        <h1 className="logo">{weWon ? "🏆 Your team wins!" : "Series lost"}</h1>
+        <p className="score-big">
+          Final — Us {view.matchScore[youTeam(view)]} · Them {view.matchScore[oppTeam(view)]}
+        </p>
+        <p className="muted">
+          Team {(view.seriesWinner ?? 0) + 1} reached {view.targetScore} points
+          {r && r.kind !== "normal" && ` with a ${r.kind === "court" ? "COURT" : "GOON COURT"}`}.
+        </p>
+        <p className="muted small">
+          {view.callerSeat !== null && view.players[view.callerSeat].name} (winning team) calls
+          first next series.
+        </p>
+      </div>
+      <button className="btn primary big" onClick={() => send({ type: "newSeries" })}>
+        New series
       </button>
     </div>
   );

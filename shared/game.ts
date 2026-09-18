@@ -55,6 +55,8 @@ export interface GameState {
 
   // results
   matchScore: [number, number];
+  targetScore: number;
+  seriesWinner: Team | null;
   roundResult: ClientView["roundResult"] | null;
 }
 
@@ -85,6 +87,8 @@ export function createGame(roomId: string): GameState {
     trickResults: [],
     lastTrick: null,
     matchScore: [0, 0],
+    targetScore: 10,
+    seriesWinner: null,
     roundResult: null,
   };
 }
@@ -131,6 +135,13 @@ export function joinGame(g: GameState, connId: string, rawName: string): number 
   }
 
   return null; // spectator / full
+}
+
+/** Set the series target (points to win) — lobby only. */
+export function setTarget(g: GameState, target: number) {
+  if (g.phase !== "lobby") throw new GameError("You can only set the target in the lobby.");
+  if (!Number.isFinite(target)) throw new GameError("Invalid target.");
+  g.targetScore = Math.max(1, Math.min(50, Math.round(target)));
 }
 
 /** Move to another seat in the lobby. If the seat is taken, swap the two players. */
@@ -265,8 +276,11 @@ export function pass(g: GameState, seat: number) {
   advanceAuction(g);
 }
 
+// Play rotates anti-clockwise: the next seat is (seat + 3) % 4.
+const nextSeat = (seat: number) => (seat + 3) % 4;
+
 function advanceAuction(g: GameState) {
-  g.auctionTurnSeat = ((g.auctionTurnSeat! + 1) % 4) as number;
+  g.auctionTurnSeat = nextSeat(g.auctionTurnSeat!);
 }
 
 function finalizeContract(g: GameState) {
@@ -320,9 +334,11 @@ export function playCard(g: GameState, seat: number, card: Card) {
   g.currentTrick.push({ seat, card });
 
   if (g.currentTrick.length === 4) {
-    resolveTrick(g);
+    // Trick complete: record it, but pause (turnSeat = null). The server waits
+    // ~1s so everyone sees all four cards, then calls advanceTrick().
+    completeTrick(g);
   } else {
-    g.turnSeat = (seat + 1) % 4;
+    g.turnSeat = nextSeat(seat);
   }
 }
 
@@ -338,7 +354,7 @@ function beats(a: Card, best: Card, trump: Suit | null, leadSuit: Suit): boolean
   return false; // both off-suit discards: cannot beat the standing best
 }
 
-function resolveTrick(g: GameState) {
+function completeTrick(g: GameState) {
   const trump = g.trump;
   const leadSuit = g.currentTrick[0].card.suit;
   let best = g.currentTrick[0];
@@ -356,26 +372,34 @@ function resolveTrick(g: GameState) {
   g.trickResults.push(result);
   g.lastTrick = { plays: [...g.currentTrick], winnerSeat: best.seat };
   g.currentTrick = [];
+  g.turnSeat = null; // pause until advanceTrick()
+}
 
+/** Called by the server after the ~1s pause: start the next trick or end the round. */
+export function advanceTrick(g: GameState) {
+  if (g.phase !== "playing" || g.turnSeat !== null) return;
+  const winner = g.lastTrick ? g.lastTrick.winnerSeat : g.leadSeat ?? 0;
   if (g.trickNumber >= 13) {
     endRound(g);
     return;
   }
-
   g.trickNumber += 1;
-  g.leadSeat = best.seat;
-  g.turnSeat = best.seat;
+  g.leadSeat = winner;
+  g.turnSeat = winner; // trick winner leads next (the "crown")
 }
 
 function endRound(g: GameState) {
   const outcome = decideRound(g.trickResults, g.contract!, g.contractTeam!);
-  g.matchScore[outcome.winnerTeam] += 1;
+  g.matchScore[outcome.winnerTeam] += outcome.points;
   g.roundResult = {
     winnerTeam: outcome.winnerTeam,
     contractTeam: g.contractTeam!,
     contract: g.contract!,
     credited: outcome.credited,
     contractMade: outcome.contractMade,
+    sweep: outcome.sweep,
+    kind: outcome.kind,
+    points: outcome.points,
   };
 
   // Winner of the round calls Ruung next: pick the winning-team member who
@@ -387,8 +411,25 @@ function endRound(g: GameState) {
   seatsOfTeam.sort((a, b) => tricksBySeat(b) - tricksBySeat(a) || a - b);
   g.callerSeat = seatsOfTeam[0];
 
-  g.phase = "roundOver";
   g.turnSeat = null;
+
+  // Series over?
+  if (g.matchScore[winTeam] >= g.targetScore) {
+    g.seriesWinner = winTeam;
+    g.phase = "gameOver";
+  } else {
+    g.phase = "roundOver";
+  }
+}
+
+/** Start a fresh series after one ends; the series winner calls first. */
+export function newSeries(g: GameState) {
+  if (g.phase !== "gameOver") throw new GameError("The series is not over.");
+  g.matchScore = [0, 0];
+  g.seriesWinner = null;
+  g.round = 1;
+  g.drawReveal = null; // series winner already holds the call, no draw needed
+  beginAuction(g);
 }
 
 // ---------------------------------------------------------------------------
@@ -437,6 +478,8 @@ export function viewFor(g: GameState, connId: string): ClientView {
     trickResults: g.trickResults,
     score: computeScore(g.trickResults),
     matchScore: g.matchScore,
+    targetScore: g.targetScore,
+    seriesWinner: g.seriesWinner ?? undefined,
     roundResult: g.roundResult ?? undefined,
   };
 

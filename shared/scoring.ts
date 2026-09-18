@@ -1,4 +1,4 @@
-import { ScoreState, Team, TrickResult } from "./types";
+import { RoundKind, ScoreState, Team, TrickResult } from "./types";
 
 /**
  * ============================================================================
@@ -91,12 +91,20 @@ export interface RoundOutcome {
   winnerTeam: Team;
   contractMade: boolean;
   credited: [number, number];
+  sweep: boolean; // the winning team took all 13 tricks
+  kind: RoundKind;
+  points: number; // points awarded to the winning team
 }
 
 /**
- * Decide the round winner once all 13 tricks are played.
- * The contract team must reach `contract` credited tricks to make it;
- * otherwise the opposing team wins the round.
+ * Decide the round winner and its point value once all 13 tricks are played.
+ *
+ * The contract team must reach `contract` credited tricks to make it; otherwise
+ * the opposing team wins the round. Point values (custom rules):
+ *   - Contract team wins, took all 13 tricks .......... "court"      → 2
+ *   - Contract team wins, fewer than 13 .............. "normal"     → 1
+ *   - Other team wins, took all 13 tricks ............ "goon-court" → 4
+ *   - Other team wins, fewer than 13 ................. "normal"     → 1
  */
 export function decideRound(
   results: TrickResult[],
@@ -108,5 +116,21 @@ export function decideRound(
   const winnerTeam: Team = contractMade
     ? contractTeam
     : ((contractTeam === 0 ? 1 : 0) as Team);
-  return { winnerTeam, contractMade, credited: score.credited };
+
+  const sweep =
+    results.length === 13 && results.every((t) => t.winnerTeam === winnerTeam);
+
+  let kind: RoundKind = "normal";
+  let points = 1;
+  if (winnerTeam === contractTeam) {
+    if (sweep) {
+      kind = "court";
+      points = 2;
+    }
+  } else if (sweep) {
+    kind = "goon-court";
+    points = 4;
+  }
+
+  return { winnerTeam, contractMade, credited: score.credited, sweep, kind, points };
 }
