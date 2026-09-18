@@ -35,6 +35,11 @@ import { RoundKind, ScoreState, Team, TrickResult } from "./types";
  *      but does NOT count as a scoring trick — EXCEPT on the final trick (13),
  *      where the Ace both wins and scores.
  *
+ *  Rule 7 — The last trick is decisive on its own:
+ *      On trick 13 the consecutive-2 requirement is waived. Whoever wins the
+ *      last trick (with the strongest card — trump beats all, else the Ace)
+ *      clinches "all 13" even without a streak.
+ *
  *  NOTE (open edge case, flagged with the user):
  *      When an Ace "bridges" a streak (e.g. win 4 with K, 5 with A, 6 with a
  *      normal card), we treat the bridging Ace trick as keeping the streak
@@ -85,7 +90,10 @@ export function computeScore(results: TrickResult[]): ScoreState {
     }
 
     // ---- crediting (to the winning player's team) --------------------------
-    if (s.streakLen >= 2 && isScoringWin(t)) {
+    // On the LAST trick (13) the consecutive-2 requirement is waived: simply
+    // winning it clinches. Otherwise you need the same player 2-in-a-row.
+    const streakOk = t.trickNumber === 13 ? s.streakLen >= 1 : s.streakLen >= 2;
+    if (streakOk && isScoringWin(t)) {
       if (!s.brokenThrough[team]) {
         // First breakthrough: retroactively credit all tricks so far — but this
         // cannot happen ON trick 12 (the streak still carries to trick 13).

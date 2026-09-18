@@ -538,6 +538,7 @@ function Play({
         <span className="chip">Trick {view.trickNumber}/13</span>
         {isWasted(view.trickNumber) && <span className="chip warn">Wasted round</span>}
         {view.trickNumber === 12 && <span className="chip warn">Can’t clinch on 12</span>}
+        {view.trickNumber === 13 && <span className="chip warn">Last trick — winner takes all</span>}
         {view.trump && <span className={`chip suit-${view.trump}`}>Trump {SUIT_LABEL[view.trump]}</span>}
       </div>
 
