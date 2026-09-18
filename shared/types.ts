@@ -118,6 +118,7 @@ export interface ClientView {
 
 export type ClientMessage =
   | { type: "join"; name: string }
+  | { type: "takeSeat"; seat: number }
   | { type: "startGame" }
   | { type: "bid"; count: 7 | 10 | 13; suit: Suit }
   | { type: "pass" }

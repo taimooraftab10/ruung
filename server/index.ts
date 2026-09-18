@@ -16,6 +16,7 @@ import {
   playCard,
   seatOfConn,
   startGame,
+  takeSeat,
   viewFor,
 } from "../shared/game";
 import { ClientMessage } from "../shared/types";
@@ -72,6 +73,9 @@ function handle(g: GameState, connId: string, msg: ClientMessage) {
   switch (msg.type) {
     case "join":
       joinGame(g, connId, msg.name);
+      break;
+    case "takeSeat":
+      takeSeat(g, connId, msg.seat);
       break;
     case "startGame":
       startGame(g);

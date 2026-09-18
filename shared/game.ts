@@ -130,6 +130,18 @@ export function joinGame(g: GameState, connId: string, rawName: string): number 
   return null; // spectator / full
 }
 
+/** Move to another seat in the lobby. If the seat is taken, swap the two players. */
+export function takeSeat(g: GameState, connId: string, seat: number) {
+  if (g.phase !== "lobby") throw new GameError("You can only change seats in the lobby.");
+  if (seat < 0 || seat > 3) throw new GameError("Invalid seat.");
+  const cur = seatOfConn(g, connId);
+  if (cur === null) throw new GameError("Join the game first.");
+  if (cur === seat) return;
+  const tmp = g.seats[seat];
+  g.seats[seat] = g.seats[cur];
+  g.seats[cur] = tmp; // if the target was empty this just moves; otherwise it swaps
+}
+
 export function disconnect(g: GameState, connId: string) {
   const seat = seatOfConn(g, connId);
   if (seat === null) return;

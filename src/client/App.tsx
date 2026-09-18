@@ -180,12 +180,52 @@ function Lobby({
 }) {
   const seated = view.players.filter((p) => p.name).length;
   const link = `${window.location.origin}/#${roomId}`;
+  // Team 1 sits in seats 0 & 2, Team 2 in seats 1 & 3 (partners opposite).
+  const teams: number[][] = [
+    [0, 2],
+    [1, 3],
+  ];
+
+  const SeatRow = ({ seat }: { seat: number }) => {
+    const p = view.players[seat];
+    const isYou = seat === view.youSeat;
+    const occupied = !!p.name;
+    return (
+      <div className={`lobby-seat ${isYou ? "you" : ""}`}>
+        <span className="ls-name">
+          {occupied ? p.name : <em className="muted">empty</em>}
+          {isYou && " (you)"}
+          {occupied && !p.connected && " ⚠"}
+        </span>
+        {!isYou && (
+          <button className="btn tiny" onClick={() => send({ type: "takeSeat", seat })}>
+            {occupied ? "Swap" : "Sit here"}
+          </button>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="panel-stack">
       <div className="card-panel">
-        <h2>Waiting for players ({seated}/4)</h2>
-        <p className="muted">Share this link so friends can join:</p>
+        <h2>Choose your team ({seated}/4)</h2>
+        <p className="muted small">Tap a seat to sit there or swap places. Partners sit opposite.</p>
+        <div className="team-picker">
+          {teams.map((seatsOfTeam, t) => (
+            <div key={t} className={`team-col team-${t}`}>
+              <div className="team-label">Team {t + 1}</div>
+              {seatsOfTeam.map((seat) => (
+                <SeatRow key={seat} seat={seat} />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card-panel">
+        <h3>Invite friends</h3>
+        <p className="muted small">Send this link — anyone who opens it joins this room.</p>
         <div className="row gap">
           <input className="grow" readOnly value={link} onFocus={(e) => e.target.select()} />
           <button className="btn" onClick={() => navigator.clipboard?.writeText(link)}>
@@ -194,28 +234,12 @@ function Lobby({
         </div>
       </div>
 
-      <div className="card-panel">
-        <h3>Seats</h3>
-        <div className="seat-grid">
-          {view.players.map((p) => (
-            <div key={p.seat} className={`seat-slot team-${teamOfSeat(p.seat)}`}>
-              <span className="seat-team">Team {teamOfSeat(p.seat) + 1}</span>
-              <span className="seat-name">
-                {p.name || <em className="muted">empty</em>}
-                {p.seat === view.youSeat && " (you)"}
-              </span>
-            </div>
-          ))}
-        </div>
-        <p className="muted small">Teams are seats 1 &amp; 3 vs 2 &amp; 4 (partners sit opposite).</p>
-      </div>
-
       <button
         className="btn primary big"
         disabled={seated < 4}
         onClick={() => send({ type: "startGame" })}
       >
-        {seated < 4 ? `Need ${4 - seated} more` : "Start game"}
+        {seated < 4 ? `Waiting for ${4 - seated} more…` : "Start game"}
       </button>
     </div>
   );
@@ -336,6 +360,10 @@ function Auction({
 //  Play
 // ---------------------------------------------------------------------------
 
+const POS = ["pos-bottom", "pos-left", "pos-top", "pos-right"];
+const relPos = (seat: number, youSeat: number | null) =>
+  POS[(seat - (youSeat ?? 0) + 4) % 4];
+
 function Play({
   view,
   send,
@@ -349,29 +377,53 @@ function Play({
 
   return (
     <div className="panel-stack">
-      <div className="table">
-        <div className="table-info">
-          <span className="chip">Trick {view.trickNumber}/13</span>
-          {isWasted(view.trickNumber) && <span className="chip warn">Wasted round</span>}
-        </div>
-        <div className="trick-area">
+      <div className="table-info">
+        <span className="chip">Trick {view.trickNumber}/13</span>
+        {isWasted(view.trickNumber) && <span className="chip warn">Wasted round</span>}
+        {view.trump && <span className={`chip suit-${view.trump}`}>Trump {SUIT_LABEL[view.trump]}</span>}
+      </div>
+
+      <div className="table-felt">
+        {view.players.map((p) => {
+          const active = view.turnSeat === p.seat;
+          return (
+            <div
+              key={p.seat}
+              className={`nameplate ${relPos(p.seat, view.youSeat)} team-t${teamOfSeat(p.seat)} ${
+                active ? "active" : ""
+              }`}
+            >
+              <div className="np-name">
+                {p.name}
+                {p.seat === view.youSeat && " (you)"}
+                {!p.connected && " ⚠"}
+              </div>
+              <div className="np-meta">
+                Team {teamOfSeat(p.seat) + 1} · {p.handCount} cards
+                {p.seat === view.callerSeat && " · 👑"}
+              </div>
+            </div>
+          );
+        })}
+
+        <div className="table-center">
           {view.players.map((p) => {
             const played = view.currentTrick.find((t) => t.seat === p.seat);
-            const active = view.turnSeat === p.seat;
             return (
-              <div key={p.seat} className={`table-seat team-${teamOfSeat(p.seat)} ${active ? "active" : ""}`}>
-                <div className="seat-head">
-                  {p.name}
-                  {p.seat === view.youSeat && " (you)"}
-                  {!p.connected && " ⚠"}
-                </div>
-                <div className="seat-card">
-                  {played ? <PlayingCard card={played.card} /> : <div className="card-ghost" />}
-                </div>
-                <div className="seat-meta small">{p.handCount} cards</div>
+              <div key={p.seat} className={`center-slot ${relPos(p.seat, view.youSeat)}`}>
+                {played ? (
+                  <PlayingCard card={played.card} />
+                ) : (
+                  <div className="card-ghost sm" />
+                )}
               </div>
             );
           })}
+          {view.leadSeat !== null && (
+            <div className="center-hint small muted">
+              {yourTurn ? "your turn" : `${view.players[view.turnSeat ?? 0].name}'s turn`}
+            </div>
+          )}
         </div>
       </div>
 
