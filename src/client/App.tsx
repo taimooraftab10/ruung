@@ -5,6 +5,7 @@ import { Card, ClientView, Suit, SUITS, teamOfSeat } from "../../shared/types";
 import {
   isMuted,
   playCardSound,
+  playFanfare,
   playGoon,
   playTurnChime,
   setMuted,
@@ -163,7 +164,19 @@ function Game({ roomId, name }: { roomId: string; name: string }) {
       {view.phase === "gameOver" && <GameOver view={view} send={net.send} />}
 
       {(view.phase === "roundOver" || view.phase === "gameOver") &&
-        view.roundResult?.kind === "goon-court" && <GoonElephant key={`ele-${view.round}`} />}
+        view.roundResult &&
+        view.roundResult.kind !== "normal" &&
+        (view.roundResult.winnerTeam === youTeam(view) ? (
+          // The winning team celebrates their court / goon court.
+          <BigWin
+            key={`win-${view.round}`}
+            kind={view.roundResult.kind}
+            points={view.roundResult.points}
+          />
+        ) : view.roundResult.kind === "goon-court" ? (
+          // Only the goon-courted (losing) team sees the elephant.
+          <GoonElephant key={`ele-${view.round}`} />
+        ) : null)}
     </div>
   );
 }
@@ -718,6 +731,36 @@ function GoonElephant() {
       <div className="ele-caption">🐘 GOON COURT! 🐘</div>
       <div className="elephant">
         <span className="ele-body">🐘</span>
+      </div>
+    </div>
+  );
+}
+
+// Celebration overlay shown to the WINNING team on a court / goon court.
+const CONFETTI_COLORS = ["#e7c26b", "#2fae74", "#6cc6ff", "#ffb27a", "#e0564b", "#ffffff"];
+function BigWin({ kind, points }: { kind: string; points: number }) {
+  useEffect(() => {
+    playFanfare();
+  }, []);
+  return (
+    <div className="celebrate-overlay" aria-hidden>
+      <div className="celebrate-text">
+        🎉 {kind === "goon-court" ? "GOON COURT!" : "COURT!"} 🎉
+        <div className="celebrate-sub">You won all 13 · +{points} points</div>
+      </div>
+      <div className="confetti">
+        {Array.from({ length: 26 }).map((_, i) => (
+          <span
+            key={i}
+            className="confetti-piece"
+            style={{
+              left: `${Math.random() * 100}%`,
+              background: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+              animationDelay: `${Math.random() * 0.6}s`,
+              animationDuration: `${1.6 + Math.random() * 1.4}s`,
+            }}
+          />
+        ))}
       </div>
     </div>
   );

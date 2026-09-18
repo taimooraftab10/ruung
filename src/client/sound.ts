@@ -69,6 +69,12 @@ export function playCardSound() {
   blip(420, 0, 0.08, 0.1);
 }
 
+/** Happy ascending arpeggio for a big win (court / goon court in your favour). */
+export function playFanfare() {
+  if (isMuted()) return;
+  [523, 659, 784, 1047].forEach((f, i) => blip(f, i * 0.12, 0.24, 0.16));
+}
+
 /** Elephant-ish trumpet for a goon court. */
 export function playGoon() {
   if (isMuted()) return;
