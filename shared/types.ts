@@ -63,8 +63,8 @@ export interface PlayerPublic {
 export interface ScoreState {
   credited: [number, number]; // credited tricks per team
   brokenThrough: [boolean, boolean]; // has team had its first "consecutive 2" breakthrough
-  seniorTeam: Team | null; // current streak owner
-  streakLen: number; // current consecutive-trick streak length
+  seniorSeat: number | null; // the PLAYER currently on a consecutive-win streak
+  streakLen: number; // current consecutive-trick streak length (same player)
 }
 
 // ---- What a single client sees (its own hand + public state) ---------------

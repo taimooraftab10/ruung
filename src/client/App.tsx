@@ -594,11 +594,11 @@ function ScorePanel({ view }: { view: ClientView }) {
       <div className="score-row small muted">
         <span>
           Senior:{" "}
-          {s.seniorTeam === null
+          {s.seniorSeat === null
             ? "—"
-            : s.seniorTeam === youTeam(view)
-              ? `Us (streak ${s.streakLen})`
-              : `Them (streak ${s.streakLen})`}
+            : `${view.players[s.seniorSeat].name}${
+                s.seniorSeat === view.youSeat ? " (you)" : ""
+              } — ${s.streakLen} in a row`}
         </span>
         {view.contract && (
           <span>

@@ -16,13 +16,15 @@ import { RoundKind, ScoreState, Team, TrickResult } from "./types";
  *      Tricks 1, 2, 3 and 12 never score on their own.
  *
  *  Rule 5 — Seniority / "consecutive 2":
- *      Scoring begins from trick 4. When a team wins TWO CONSECUTIVE tricks
- *      (earliest = 4th & 5th), they become "senior". The FIRST such
- *      breakthrough retroactively credits that team with ALL tricks so far
- *      (e.g. breaking through on trick 5 => credited 5). After the first
+ *      Scoring begins from trick 4. Seniority is PER PLAYER: the SAME player
+ *      must win TWO CONSECUTIVE tricks (earliest = 4th & 5th) to break through.
+ *      If a player wins a trick and then their partner wins the next, the
+ *      streak resets (it must be the same person twice in a row). The FIRST
+ *      breakthrough retroactively credits that player's TEAM with ALL tricks so
+ *      far (e.g. breaking through on trick 5 => credited 5). After the first
  *      breakthrough, each further trick won while the streak continues adds 1.
- *      Losing a trick breaks the streak; the team must win 2-in-a-row again
- *      before crediting resumes (no second retroactive bonus).
+ *      Losing/handing off the streak breaks it; the player must win 2-in-a-row
+ *      again before crediting resumes (no second retroactive bonus).
  *
  *  Rule 6 — The Ace (wins the trick, but doesn't score):
  *      A trick physically won with an Ace keeps the streak ALIVE (seniority),
@@ -52,7 +54,7 @@ export function emptyScore(): ScoreState {
   return {
     credited: [0, 0],
     brokenThrough: [false, false],
-    seniorTeam: null,
+    seniorSeat: null,
     streakLen: 0,
   };
 }
@@ -64,15 +66,17 @@ export function computeScore(results: TrickResult[]): ScoreState {
   for (const t of results) {
     const team = t.winnerTeam;
 
-    // ---- streak (seniority): Ace-won tricks DO keep the streak alive --------
-    if (s.seniorTeam === team) {
+    // ---- streak (seniority) is PER PLAYER: the same seat must win in a row.
+    // Ace-won tricks by that same player DO keep the streak alive; a partner
+    // winning instead resets it to that partner (length 1).
+    if (s.seniorSeat === t.winnerSeat) {
       s.streakLen += 1;
     } else {
-      s.seniorTeam = team;
+      s.seniorSeat = t.winnerSeat;
       s.streakLen = 1;
     }
 
-    // ---- crediting ---------------------------------------------------------
+    // ---- crediting (to the winning player's team) --------------------------
     if (s.streakLen >= 2 && isScoringWin(t)) {
       if (!s.brokenThrough[team]) {
         // First breakthrough: retroactively credit all tricks so far.
