@@ -12,8 +12,12 @@ import { RoundKind, ScoreState, Team, TrickResult } from "./types";
  *
  * Rules encoded here (from our rules doc):
  *
- *  Rule 4 — Wasted rounds:
- *      Tricks 1, 2, 3 and 12 never score on their own.
+ *  Rule 4 — Wasted rounds & trick 12:
+ *      Tricks 1, 2, 3 are wasted: they never score on their own (they only get
+ *      swept in by a later breakthrough). Trick 12 is NOT wasted — it keeps the
+ *      streak alive and counts normally — BUT the first breakthrough ("win all
+ *      the rounds below") cannot COMPLETE on trick 12. So winning 11 & 12 does
+ *      not clinch; carrying the streak to trick 13 does.
  *
  *  Rule 5 — Seniority / "consecutive 2":
  *      Scoring begins from trick 4. Seniority is PER PLAYER: the SAME player
@@ -39,9 +43,13 @@ import { RoundKind, ScoreState, Team, TrickResult } from "./types";
  *      if the table plays it differently.
  */
 
-const WASTED_TRICKS = new Set([1, 2, 3, 12]);
+const WASTED_TRICKS = new Set([1, 2, 3]);
 
 export const isWastedTrick = (trickNumber: number) => WASTED_TRICKS.has(trickNumber);
+
+// The first breakthrough (retroactively "winning all the rounds below") may not
+// complete on trick 12, though the streak still carries through it to trick 13.
+export const NO_CLINCH_TRICK = 12;
 
 /** A trick that can contribute to the score (not wasted; Ace only on trick 13). */
 export function isScoringWin(t: TrickResult): boolean {
@@ -79,9 +87,12 @@ export function computeScore(results: TrickResult[]): ScoreState {
     // ---- crediting (to the winning player's team) --------------------------
     if (s.streakLen >= 2 && isScoringWin(t)) {
       if (!s.brokenThrough[team]) {
-        // First breakthrough: retroactively credit all tricks so far.
-        s.credited[team] += t.trickNumber;
-        s.brokenThrough[team] = true;
+        // First breakthrough: retroactively credit all tricks so far — but this
+        // cannot happen ON trick 12 (the streak still carries to trick 13).
+        if (t.trickNumber !== NO_CLINCH_TRICK) {
+          s.credited[team] += t.trickNumber;
+          s.brokenThrough[team] = true;
+        }
       } else {
         s.credited[team] += 1;
       }

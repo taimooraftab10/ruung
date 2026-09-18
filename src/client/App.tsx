@@ -537,6 +537,7 @@ function Play({
       <div className="table-info">
         <span className="chip">Trick {view.trickNumber}/13</span>
         {isWasted(view.trickNumber) && <span className="chip warn">Wasted round</span>}
+        {view.trickNumber === 12 && <span className="chip warn">Can’t clinch on 12</span>}
         {view.trump && <span className={`chip suit-${view.trump}`}>Trump {SUIT_LABEL[view.trump]}</span>}
       </div>
 
@@ -747,4 +748,4 @@ function PlayingCard({ card, small }: { card: Card; small?: boolean }) {
 }
 
 const suitColor = (s: Suit) => (s === "H" || s === "D" ? "red" : "black");
-const isWasted = (n: number) => n === 1 || n === 2 || n === 3 || n === 12;
+const isWasted = (n: number) => n === 1 || n === 2 || n === 3;
