@@ -68,3 +68,23 @@ export function playCardSound() {
   if (isMuted()) return;
   blip(420, 0, 0.08, 0.1);
 }
+
+/** Elephant-ish trumpet for a goon court. */
+export function playGoon() {
+  if (isMuted()) return;
+  const c = getCtx();
+  if (!c) return;
+  const osc = c.createOscillator();
+  const g = c.createGain();
+  osc.type = "sawtooth";
+  const t = c.currentTime;
+  osc.frequency.setValueAtTime(180, t);
+  osc.frequency.linearRampToValueAtTime(520, t + 0.35);
+  osc.frequency.linearRampToValueAtTime(150, t + 1.0);
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.18, t + 0.05);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+  osc.connect(g).connect(c.destination);
+  osc.start(t);
+  osc.stop(t + 1.15);
+}

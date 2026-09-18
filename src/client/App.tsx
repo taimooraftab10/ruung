@@ -5,6 +5,7 @@ import { Card, ClientView, Suit, SUITS, teamOfSeat } from "../../shared/types";
 import {
   isMuted,
   playCardSound,
+  playGoon,
   playTurnChime,
   setMuted,
   unlockAudio,
@@ -160,6 +161,9 @@ function Game({ roomId, name }: { roomId: string; name: string }) {
       {view.phase === "playing" && <Play view={view} send={net.send} />}
       {view.phase === "roundOver" && <RoundOver view={view} send={net.send} />}
       {view.phase === "gameOver" && <GameOver view={view} send={net.send} />}
+
+      {(view.phase === "roundOver" || view.phase === "gameOver") &&
+        view.roundResult?.kind === "goon-court" && <GoonElephant key={`ele-${view.round}`} />}
     </div>
   );
 }
@@ -323,15 +327,17 @@ function Auction({
   const mustOpen = !view.currentBid && view.youSeat === view.callerSeat;
 
   const seatMeta = (seat: number) => {
+    const crown = seat === view.callerSeat ? "👑 " : "";
     const a = view.auctionActions[seat];
-    if (a === "pass") return <span className="bid-pass">Passed</span>;
+    if (a === "pass") return <span className="bid-pass">{crown}Passed</span>;
     if (a) return (
       <span className={`bid-made suit-${a.suit}`}>
+        {crown}
         {a.count} {SUIT_LABEL[a.suit]}
       </span>
     );
-    if (seat === view.auctionTurnSeat) return <span className="bid-think">bidding…</span>;
-    return <span className="muted">waiting</span>;
+    if (seat === view.auctionTurnSeat) return <span className="bid-think">{crown}bidding…</span>;
+    return <span className="muted">{crown}waiting</span>;
   };
 
   const center = view.currentBid ? (
@@ -445,15 +451,22 @@ function PlayerRing({
   seatMeta,
   center,
   leadingSeat = null,
+  showDirection = false,
 }: {
   view: ClientView;
   activeSeat: number | null;
   seatMeta: (seat: number) => ReactNode;
   center: ReactNode;
   leadingSeat?: number | null;
+  showDirection?: boolean;
 }) {
   return (
     <div className="table-felt">
+      {showDirection && (
+        <div className="ring-dir" aria-hidden title="Play goes anti-clockwise">
+          ↺
+        </div>
+      )}
       {view.players.map((p) => (
         <div
           key={p.seat}
@@ -527,7 +540,13 @@ function Play({
         {view.trump && <span className={`chip suit-${view.trump}`}>Trump {SUIT_LABEL[view.trump]}</span>}
       </div>
 
-      <PlayerRing view={view} activeSeat={view.turnSeat} seatMeta={seatMeta} center={center} />
+      <PlayerRing
+        view={view}
+        activeSeat={view.turnSeat}
+        seatMeta={seatMeta}
+        center={center}
+        showDirection
+      />
 
       <ScorePanel view={view} />
 
@@ -676,6 +695,24 @@ function GameOver({
       <button className="btn primary big" onClick={() => send({ type: "newSeries" })}>
         New series
       </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+//  Goon-court elephant
+// ---------------------------------------------------------------------------
+
+function GoonElephant() {
+  useEffect(() => {
+    playGoon();
+  }, []);
+  return (
+    <div className="elephant-overlay" aria-hidden>
+      <div className="ele-caption">🐘 GOON COURT! 🐘</div>
+      <div className="elephant">
+        <span className="ele-body">🐘</span>
+      </div>
     </div>
   );
 }
