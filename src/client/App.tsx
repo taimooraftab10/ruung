@@ -649,7 +649,7 @@ function RoundOver({
         <p>
           Contract was <strong>{r.contract}</strong>, called by{" "}
           <strong>Team {r.contractTeam + 1}</strong> — {r.contractMade ? "made ✅" : "failed ❌"}
-          {r.sweep && " · all 13 tricks!"}.
+          {r.sweep && " · won all 13 rounds!"}.
         </p>
         <p className="muted">
           Credited tricks — Team 1: {r.credited[0]} · Team 2: {r.credited[1]}

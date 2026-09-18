@@ -106,6 +106,9 @@ export function computeScore(results: TrickResult[]): ScoreState {
         s.credited[team] += gain;
         s.claimed = t.trickNumber;
       }
+      // A clinch consumes the streak: to win more you must earn a NEW 2-in-a-row.
+      // (Winning 6 & 7 sweeps the board; winning 8 next does NOT — you need 8 & 9.)
+      s.streakLen = 0;
     }
   }
 
@@ -126,10 +129,12 @@ export interface RoundOutcome {
  *
  * The contract team must reach `contract` credited tricks to make it; otherwise
  * the opposing team wins the round. Point values (custom rules):
- *   - Contract team wins, took all 13 tricks .......... "court"      → 2
- *   - Contract team wins, fewer than 13 .............. "normal"     → 1
- *   - Other team wins, took all 13 tricks ............ "goon-court" → 4
- *   - Other team wins, fewer than 13 ................. "normal"     → 1
+ *   - Contract team wins ALL 13 rounds ............... "court"      → 2
+ *   - Other team wins ALL 13 rounds .................. "goon-court" → 4
+ *   - Any other winning margin ....................... "normal"     → 1
+ *
+ * "All 13 rounds" means credited === 13 (the winning team claimed every round),
+ * not merely taking every physical trick.
  */
 export function decideRound(
   results: TrickResult[],
@@ -142,20 +147,19 @@ export function decideRound(
     ? contractTeam
     : ((contractTeam === 0 ? 1 : 0) as Team);
 
-  const sweep =
-    results.length === 13 && results.every((t) => t.winnerTeam === winnerTeam);
+  const allThirteen = score.credited[winnerTeam] === 13;
 
   let kind: RoundKind = "normal";
   let points = 1;
-  if (winnerTeam === contractTeam) {
-    if (sweep) {
+  if (allThirteen) {
+    if (winnerTeam === contractTeam) {
       kind = "court";
       points = 2;
+    } else {
+      kind = "goon-court";
+      points = 4;
     }
-  } else if (sweep) {
-    kind = "goon-court";
-    points = 4;
   }
 
-  return { winnerTeam, contractMade, credited: score.credited, sweep, kind, points };
+  return { winnerTeam, contractMade, credited: score.credited, sweep: allThirteen, kind, points };
 }
