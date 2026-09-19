@@ -152,16 +152,33 @@ function Game({ roomId, name }: { roomId: string; name: string }) {
     );
   }
 
+  const spectating = view.youSeat === null;
+
   return (
     <div className="screen">
       <Header view={view} roomId={roomId} />
       {error && <div className="toast">{error}</div>}
+
+      {spectating && (
+        <div className="spectator-bar">
+          👀 You’re spectating — you can see everyone’s cards and chat. Grab a free
+          seat in the lobby to play.
+        </div>
+      )}
 
       {view.phase === "lobby" && <Lobby view={view} roomId={roomId} send={net.send} />}
       {view.phase === "auction" && <Auction view={view} send={net.send} />}
       {view.phase === "playing" && <Play view={view} send={net.send} />}
       {view.phase === "roundOver" && <RoundOver view={view} send={net.send} />}
       {view.phase === "gameOver" && <GameOver view={view} send={net.send} />}
+
+      {spectating &&
+        view.allHands &&
+        (view.phase === "auction" || view.phase === "playing") && (
+          <SpectatorHands view={view} />
+        )}
+
+      <Chat view={view} send={net.send} />
 
       {(view.phase === "roundOver" || view.phase === "gameOver") &&
         view.roundResult &&
@@ -218,8 +235,15 @@ function Header({ view, roomId }: { view: ClientView; roomId: string }) {
             {view.players[view.contractSeat].name} called {view.contract}
           </span>
         )}
+        {view.spectators.length > 0 && (
+          <span className="chip" title={view.spectators.join(", ")}>
+            👀 {view.spectators.length}
+          </span>
+        )}
         <span className="chip" title={`First to ${view.targetScore}`}>
-          Us {view.matchScore[youTeam(view)]} · Them {view.matchScore[oppTeam(view)]} / {view.targetScore}
+          {view.youSeat === null
+            ? `Team 1 ${view.matchScore[0]} · Team 2 ${view.matchScore[1]} / ${view.targetScore}`
+            : `Us ${view.matchScore[youTeam(view)]} · Them ${view.matchScore[oppTeam(view)]} / ${view.targetScore}`}
         </span>
       </div>
     </header>
@@ -250,10 +274,13 @@ function Lobby({
     [1, 3],
   ];
 
+  const spectating = view.youSeat === null;
   const SeatRow = ({ seat }: { seat: number }) => {
     const p = view.players[seat];
     const isYou = seat === view.youSeat;
     const occupied = !!p.name;
+    // Spectators may only take an EMPTY seat; seated players can swap or move.
+    const canAct = !isYou && (spectating ? !occupied : true);
     return (
       <div className={`lobby-seat ${isYou ? "you" : ""}`}>
         <span className="ls-name">
@@ -261,7 +288,7 @@ function Lobby({
           {isYou && " (you)"}
           {occupied && !p.connected && " ⚠"}
         </span>
-        {!isYou && (
+        {canAct && (
           <button className="btn tiny" onClick={() => send({ type: "takeSeat", seat })}>
             {occupied ? "Swap" : "Sit here"}
           </button>
@@ -285,6 +312,11 @@ function Lobby({
             </div>
           ))}
         </div>
+        {view.spectators.length > 0 && (
+          <p className="small muted">
+            👀 Watching: {view.spectators.join(", ")}
+          </p>
+        )}
       </div>
 
       <div className="card-panel">
@@ -881,6 +913,123 @@ function ContractBanner({ view }: { view: ClientView }) {
           {SUIT_NAME[view.trump]} {SUIT_LABEL[view.trump]} is Ruung (trump)
         </span>
       </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+//  Chat (players + spectators)
+// ---------------------------------------------------------------------------
+
+function Chat({
+  view,
+  send,
+}: {
+  view: ClientView;
+  send: ReturnType<typeof useGame>["send"];
+}) {
+  const [text, setText] = useState("");
+  const [open, setOpen] = useState(true);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to the newest message.
+  useEffect(() => {
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [view.chat.length, open]);
+
+  const submit = () => {
+    const t = text.trim();
+    if (!t) return;
+    send({ type: "chat", text: t });
+    setText("");
+  };
+
+  return (
+    <div className="card-panel chat">
+      <button className="chat-head" onClick={() => setOpen((o) => !o)}>
+        <strong>💬 Chat</strong>
+        <span className="small muted">
+          {view.spectators.length > 0 && `👀 ${view.spectators.length} watching · `}
+          {open ? "hide" : "show"}
+        </span>
+      </button>
+
+      {open && (
+        <>
+          <div className="chat-list" ref={listRef}>
+            {view.chat.length === 0 ? (
+              <p className="muted small">No messages yet — say hi 👋</p>
+            ) : (
+              view.chat.map((m) => (
+                <div key={m.id} className="chat-msg">
+                  <span
+                    className={`chat-from ${
+                      m.seat === null ? "spec" : `team-t${m.team}`
+                    }`}
+                  >
+                    {m.name}
+                    {m.seat === null ? " 👀" : ""}
+                  </span>
+                  <span className="chat-text">{m.text}</span>
+                </div>
+              ))
+            )}
+          </div>
+          <div className="row gap">
+            <input
+              className="grow"
+              value={text}
+              maxLength={300}
+              placeholder="Message everyone…"
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submit();
+              }}
+            />
+            <button className="btn" onClick={submit} disabled={!text.trim()}>
+              Send
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+//  Spectator view — every hand face-up
+// ---------------------------------------------------------------------------
+
+function SpectatorHands({ view }: { view: ClientView }) {
+  if (!view.allHands) return null;
+  return (
+    <div className="card-panel spectator-hands">
+      <div className="chat-head static">
+        <strong>👀 All hands</strong>
+        <span className="small muted">spectator view</span>
+      </div>
+      <div className="spec-grid">
+        {view.players.map((p) => (
+          <div key={p.seat} className={`spec-seat team-t${teamOfSeat(p.seat)}`}>
+            <div className="spec-name">
+              {p.name || <em className="muted">empty</em>} · Team {teamOfSeat(p.seat) + 1}
+              {p.seat === view.turnSeat && " ⏳"}
+            </div>
+            <div className="hand spec-hand">
+              {view.allHands![p.seat].map((c) => (
+                <div key={`${c.suit}${c.rank}`} className={`playing-card ${suitColor(c.suit)}`}>
+                  <span className="pc-rank">{cardLabel(c).slice(0, -1)}</span>
+                  <span className="pc-suit">{SUIT_LABEL[c.suit]}</span>
+                </div>
+              ))}
+              {view.allHands![p.seat].length === 0 && (
+                <span className="muted small">no cards</span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

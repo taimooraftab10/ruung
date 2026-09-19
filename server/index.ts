@@ -10,6 +10,7 @@ import {
   advanceTrick,
   autoMove,
   bid,
+  chatSend,
   createGame,
   disconnect,
   joinGame,
@@ -51,7 +52,12 @@ interface Conn {
 const games = new Map<string, GameState>();
 const roomConns = new Map<string, Set<Conn>>();
 const pendingAdvance = new Set<string>();
-const turnTimers = new Map<string, ReturnType<typeof setTimeout>>();
+interface TurnTimer {
+  timer: ReturnType<typeof setTimeout>;
+  actor: number;
+  phase: GameState["phase"];
+}
+const turnTimers = new Map<string, TurnTimer>();
 
 // How long each player has to act before the server moves for them.
 const PLAY_MS = 10_000; // 10s to play a card
@@ -60,16 +66,17 @@ const BID_MS = 20_000; // 20s to bid / pass
 function clearTurnTimer(roomId: string) {
   const t = turnTimers.get(roomId);
   if (t) {
-    clearTimeout(t);
+    clearTimeout(t.timer);
     turnTimers.delete(roomId);
   }
 }
 
 // Arm (or re-arm) the countdown for whoever must act now. Sets g.turnDeadline so
 // clients can render the clock, and schedules the server's auto-move. Called
-// after every state change; a no-op when nobody is on the clock.
+// after every state change; a no-op when nobody is on the clock. If the same
+// player is already on the clock (e.g. someone just chatted) the existing
+// deadline is kept, so unrelated messages never reset the timer.
 function armTurnTimer(roomId: string) {
-  clearTurnTimer(roomId);
   const g = games.get(roomId);
   if (!g) return;
 
@@ -84,10 +91,16 @@ function armTurnTimer(roomId: string) {
   }
 
   if (seat === null) {
+    clearTurnTimer(roomId);
     g.turnDeadline = null; // pause / lobby / round over — no clock
     return;
   }
 
+  // Already ticking for this exact turn? Leave it running.
+  const existing = turnTimers.get(roomId);
+  if (existing && existing.actor === seat && existing.phase === g.phase) return;
+
+  clearTurnTimer(roomId);
   g.turnDeadline = Date.now() + ms;
   const actor = seat;
   const phase = g.phase;
@@ -109,7 +122,7 @@ function armTurnTimer(roomId: string) {
     broadcast(roomId);
     scheduleAdvanceIfNeeded(roomId);
   }, ms);
-  turnTimers.set(roomId, timer);
+  turnTimers.set(roomId, { timer, actor, phase });
 }
 
 // After a trick completes the game pauses (turnSeat === null). Wait ~1s so
@@ -183,6 +196,9 @@ function handle(g: GameState, connId: string, msg: ClientMessage) {
       break;
     case "nextRound":
       nextRound(g);
+      break;
+    case "chat":
+      chatSend(g, connId, msg.text);
       break;
   }
 }

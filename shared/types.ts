@@ -58,6 +58,17 @@ export interface PlayerPublic {
   handCount: number; // number of cards still in hand (public)
 }
 
+// ---- Chat ------------------------------------------------------------------
+
+export interface ChatMessage {
+  id: number;
+  name: string;
+  seat: number | null; // null = spectator
+  team: Team | null; // team colour for seated players
+  text: string;
+  ts: number;
+}
+
 // ---- Scoring snapshot (recomputed each trick) ------------------------------
 
 export interface ScoreState {
@@ -75,12 +86,16 @@ export interface ClientView {
   round: number;
   youSeat: number | null; // null if you are a spectator / not seated
   players: PlayerPublic[];
+  spectators: string[]; // names of connected, unseated watchers
+  chat: ChatMessage[];
 
   // draw phase
   drawReveal?: { seat: number; card: Card }[];
 
   // your private hand
   hand: Card[];
+  // spectators see EVERY hand (by seat); undefined for seated players
+  allHands?: Card[][];
 
   // auction
   callerSeat: number | null;
@@ -142,7 +157,8 @@ export type ClientMessage =
   | { type: "pass" }
   | { type: "playCard"; card: Card }
   | { type: "nextRound" }
-  | { type: "newSeries" };
+  | { type: "newSeries" }
+  | { type: "chat"; text: string };
 
 // ---- Messages: server -> client -------------------------------------------
 

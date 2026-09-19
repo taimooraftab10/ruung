@@ -960,3 +960,109 @@ input:focus {
   color: #ffd2cc;
   font-weight: 600;
 }
+
+/* ---- Spectating ---- */
+.spectator-bar {
+  background: rgba(108, 198, 255, 0.14);
+  border: 1px solid rgba(108, 198, 255, 0.5);
+  color: #d6efff;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  margin-bottom: 10px;
+}
+.spectator-hands .spec-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.spec-seat {
+  border: 1px solid var(--line);
+  border-top-width: 3px;
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.15);
+}
+.spec-seat.team-t0 {
+  border-top-color: var(--team0);
+}
+.spec-seat.team-t1 {
+  border-top-color: var(--team1);
+}
+.spec-name {
+  font-size: 0.8rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.spec-hand {
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.spec-hand .playing-card {
+  transform: none;
+}
+@media (max-width: 560px) {
+  .spectator-hands .spec-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---- Chat ---- */
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+.chat-head.static {
+  cursor: default;
+}
+.chat-list {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.2);
+}
+.chat-msg {
+  font-size: 0.86rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.chat-from {
+  font-weight: 800;
+  margin-right: 6px;
+}
+.chat-from::after {
+  content: ":";
+  color: var(--muted, #9fb3aa);
+  font-weight: 400;
+}
+.chat-from.team-t0 {
+  color: var(--team0);
+}
+.chat-from.team-t1 {
+  color: var(--team1);
+}
+.chat-from.spec {
+  color: #9fb3aa;
+}
+.chat-text {
+  color: var(--text);
+}

@@ -4,6 +4,7 @@ import {
   ACE,
   Bid,
   Card,
+  ChatMessage,
   ClientView,
   PlayedCard,
   SeatAuction,
@@ -64,6 +65,11 @@ export interface GameState {
   targetScore: number;
   seriesWinner: Team | null;
   roundResult: ClientView["roundResult"] | null;
+
+  // spectators (connected but not seated) and shared chat
+  spectatorNames: Record<string, string>; // connId -> name
+  chat: ChatMessage[];
+  chatSeq: number;
 }
 
 const emptySeat = (): SeatState => ({ connId: null, name: "", connected: false });
@@ -98,6 +104,9 @@ export function createGame(roomId: string): GameState {
     targetScore: 10,
     seriesWinner: null,
     roundResult: null,
+    spectatorNames: {},
+    chat: [],
+    chatSeq: 0,
   };
 }
 
@@ -130,6 +139,7 @@ export function joinGame(g: GameState, connId: string, rawName: string): number 
   if (reclaim !== -1) {
     g.seats[reclaim].connId = connId;
     g.seats[reclaim].connected = true;
+    delete g.spectatorNames[connId];
     return reclaim;
   }
 
@@ -138,11 +148,33 @@ export function joinGame(g: GameState, connId: string, rawName: string): number 
     const free = g.seats.findIndex((s) => s.connId === null && s.name === "");
     if (free !== -1) {
       g.seats[free] = { connId, name, connected: true };
+      delete g.spectatorNames[connId];
       return free;
     }
   }
 
-  return null; // spectator / full
+  // Otherwise you watch: only four seats play, everyone else spectates (and can
+  // still chat and see every hand).
+  g.spectatorNames[connId] = name;
+  return null;
+}
+
+/** Append a chat message from a player or spectator (kept to the last 100). */
+export function chatSend(g: GameState, connId: string, rawText: string) {
+  const text = (rawText || "").replace(/\s+/g, " ").trim().slice(0, 300);
+  if (!text) return;
+  const seat = seatOfConn(g, connId);
+  const name =
+    seat !== null ? g.seats[seat].name : g.spectatorNames[connId] || "Spectator";
+  g.chat.push({
+    id: ++g.chatSeq,
+    name,
+    seat,
+    team: seat !== null ? teamOfSeat(seat) : null,
+    text,
+    ts: Date.now(),
+  });
+  if (g.chat.length > 100) g.chat.splice(0, g.chat.length - 100);
 }
 
 /** Set the series target (points to win) — lobby only. */
@@ -157,7 +189,17 @@ export function takeSeat(g: GameState, connId: string, seat: number) {
   if (g.phase !== "lobby") throw new GameError("You can only change seats in the lobby.");
   if (seat < 0 || seat > 3) throw new GameError("Invalid seat.");
   const cur = seatOfConn(g, connId);
-  if (cur === null) throw new GameError("Join the game first.");
+  if (cur === null) {
+    // A spectator claiming a free seat in the lobby.
+    if (g.seats[seat].connId !== null) throw new GameError("That seat is taken.");
+    g.seats[seat] = {
+      connId,
+      name: g.spectatorNames[connId] || "Player",
+      connected: true,
+    };
+    delete g.spectatorNames[connId];
+    return;
+  }
   if (cur === seat) return;
   const tmp = g.seats[seat];
   g.seats[seat] = g.seats[cur];
@@ -165,6 +207,7 @@ export function takeSeat(g: GameState, connId: string, seat: number) {
 }
 
 export function disconnect(g: GameState, connId: string) {
+  delete g.spectatorNames[connId];
   const seat = seatOfConn(g, connId);
   if (seat === null) return;
   g.seats[seat].connected = false;
@@ -529,8 +572,12 @@ export function viewFor(g: GameState, connId: string): ClientView {
       connected: s.connected,
       handCount: g.hands[seat].length,
     })),
+    spectators: Object.values(g.spectatorNames).filter(Boolean),
+    chat: g.chat,
     drawReveal: g.drawReveal ?? undefined,
     hand: youSeat !== null ? g.hands[youSeat] : [],
+    // Spectators watch with everything face-up; seated players never see other hands.
+    allHands: youSeat === null ? g.hands.map((h) => [...h]) : undefined,
     callerSeat: g.callerSeat,
     auctionTurnSeat: g.auctionTurnSeat,
     currentBid: g.currentBid,
