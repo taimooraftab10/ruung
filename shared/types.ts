@@ -93,6 +93,7 @@ export interface ClientView {
   trump: Suit | null;
   contract: number | null;
   contractTeam: Team | null;
+  contractSeat: number | null; // the player who won the auction (called Ruung)
 
   // play
   turnSeat: number | null;
@@ -101,6 +102,10 @@ export interface ClientView {
   currentTrick: PlayedCard[];
   lastTrick: { plays: PlayedCard[]; winnerSeat: number } | null;
   trickResults: TrickResult[];
+
+  // per-turn countdown clock (ms remaining for the active player to act; the
+  // server auto-plays the weakest move / auto-passes when it hits zero).
+  turnMsLeft?: number | null;
 
   // scoring
   score: ScoreState;

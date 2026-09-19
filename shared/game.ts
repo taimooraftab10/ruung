@@ -1,6 +1,7 @@
 import { makeDeck, shuffle, cardEq } from "./deck";
 import { computeScore, decideRound, isWastedTrick } from "./scoring";
 import {
+  ACE,
   Bid,
   Card,
   ClientView,
@@ -44,6 +45,11 @@ export interface GameState {
   trump: Suit | null;
   contract: number | null;
   contractTeam: Team | null;
+  contractSeat: number | null;
+
+  // per-turn countdown (epoch ms when the active player is auto-played); the
+  // server owns the actual timer, this is only the deadline it broadcasts.
+  turnDeadline: number | null;
 
   // play
   turnSeat: number | null;
@@ -80,6 +86,8 @@ export function createGame(roomId: string): GameState {
     trump: null,
     contract: null,
     contractTeam: null,
+    contractSeat: null,
+    turnDeadline: null,
     turnSeat: null,
     leadSeat: null,
     trickNumber: 0,
@@ -222,6 +230,8 @@ function beginAuction(g: GameState) {
   g.trump = null;
   g.contract = null;
   g.contractTeam = null;
+  g.contractSeat = null;
+  g.turnDeadline = null;
   g.turnSeat = null;
   g.leadSeat = null;
   g.trickNumber = 0;
@@ -288,6 +298,7 @@ function finalizeContract(g: GameState) {
   g.trump = b.suit;
   g.contract = b.count;
   g.contractTeam = teamOfSeat(b.seat);
+  g.contractSeat = b.seat;
 
   // Deal the remaining cards so everyone holds 13.
   while (g.deck.length > 0) {
@@ -354,11 +365,28 @@ function beats(a: Card, best: Card, trump: Suit | null, leadSuit: Suit): boolean
   return false; // both off-suit discards: cannot beat the standing best
 }
 
+// Rule: an Ace played in TWO consecutive tricks by the SAME player is "dead" —
+// the second Ace counts as the WEAKEST card in that trick, so the highest of the
+// other three wins instead. We detect it by looking at the immediately previous
+// trick's plays (g.lastTrick still holds them here, before we overwrite it).
+function isDeadAce(g: GameState, play: PlayedCard): boolean {
+  if (play.card.rank !== ACE) return false;
+  const prev = g.lastTrick?.plays;
+  if (!prev) return false; // first trick — nothing before it
+  const before = prev.find((p) => p.seat === play.seat);
+  return !!before && before.card.rank === ACE;
+}
+
 function completeTrick(g: GameState) {
   const trump = g.trump;
   const leadSuit = g.currentTrick[0].card.suit;
-  let best = g.currentTrick[0];
-  for (const play of g.currentTrick.slice(1)) {
+
+  // Dead aces are removed from contention (they're the weakest cards). If every
+  // card in the trick is a dead ace, fall back to the whole trick so someone wins.
+  const contenders = g.currentTrick.filter((p) => !isDeadAce(g, p));
+  const pool = contenders.length > 0 ? contenders : g.currentTrick;
+  let best = pool[0];
+  for (const play of pool.slice(1)) {
     if (beats(play.card, best.card, trump, leadSuit)) best = play;
   }
 
@@ -366,7 +394,7 @@ function completeTrick(g: GameState) {
     trickNumber: g.trickNumber,
     winnerSeat: best.seat,
     winnerTeam: teamOfSeat(best.seat),
-    wonByAce: best.card.rank === 14,
+    wonByAce: best.card.rank === ACE,
     wasted: isWastedTrick(g.trickNumber),
   };
   g.trickResults.push(result);
@@ -443,6 +471,47 @@ function sortHand(hand: Card[]) {
 }
 
 // ---------------------------------------------------------------------------
+//  Auto-move (played by the server when a player's turn clock runs out)
+// ---------------------------------------------------------------------------
+
+/** The weakest legal card to play: lowest rank, keeping trumps back if possible. */
+export function worstCard(g: GameState, seat: number): Card {
+  const legal = legalCards(g, seat);
+  const trump = g.trump;
+  return [...legal].sort((a, b) => {
+    const at = a.suit === trump ? 1 : 0;
+    const bt = b.suit === trump ? 1 : 0;
+    if (at !== bt) return at - bt; // prefer non-trump (don't waste a trump)
+    return a.rank - b.rank; // then the lowest card
+  })[0];
+}
+
+const longestSuit = (hand: Card[]): Suit => {
+  const count: Record<Suit, number> = { H: 0, D: 0, C: 0, S: 0 };
+  for (const c of hand) count[c.suit] += 1;
+  return (["S", "H", "C", "D"] as Suit[]).sort((a, b) => count[b] - count[a])[0];
+};
+
+/**
+ * Make the automatic move for a seat whose clock expired. In play it dumps the
+ * weakest card; in the auction it passes, unless it's the caller who still has
+ * to open — then it makes the smallest possible call (7) on their longest suit.
+ */
+export function autoMove(g: GameState, seat: number) {
+  if (g.phase === "playing" && g.turnSeat === seat) {
+    playCard(g, seat, worstCard(g, seat));
+    return;
+  }
+  if (g.phase === "auction" && g.auctionTurnSeat === seat) {
+    if (!g.currentBid && seat === g.callerSeat) {
+      bid(g, seat, 7, longestSuit(g.hands[seat]));
+    } else {
+      pass(g, seat);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 //  Build the per-player view (hides other hands)
 // ---------------------------------------------------------------------------
 
@@ -470,6 +539,8 @@ export function viewFor(g: GameState, connId: string): ClientView {
     trump: g.trump,
     contract: g.contract,
     contractTeam: g.contractTeam,
+    contractSeat: g.contractSeat,
+    turnMsLeft: g.turnDeadline ? Math.max(0, g.turnDeadline - Date.now()) : null,
     turnSeat: g.turnSeat,
     leadSeat: g.leadSeat,
     trickNumber: g.trickNumber,

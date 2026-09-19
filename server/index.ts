@@ -8,6 +8,7 @@ import {
   GameError,
   GameState,
   advanceTrick,
+  autoMove,
   bid,
   createGame,
   disconnect,
@@ -50,6 +51,66 @@ interface Conn {
 const games = new Map<string, GameState>();
 const roomConns = new Map<string, Set<Conn>>();
 const pendingAdvance = new Set<string>();
+const turnTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+// How long each player has to act before the server moves for them.
+const PLAY_MS = 10_000; // 10s to play a card
+const BID_MS = 20_000; // 20s to bid / pass
+
+function clearTurnTimer(roomId: string) {
+  const t = turnTimers.get(roomId);
+  if (t) {
+    clearTimeout(t);
+    turnTimers.delete(roomId);
+  }
+}
+
+// Arm (or re-arm) the countdown for whoever must act now. Sets g.turnDeadline so
+// clients can render the clock, and schedules the server's auto-move. Called
+// after every state change; a no-op when nobody is on the clock.
+function armTurnTimer(roomId: string) {
+  clearTurnTimer(roomId);
+  const g = games.get(roomId);
+  if (!g) return;
+
+  let seat: number | null = null;
+  let ms = 0;
+  if (g.phase === "playing" && g.turnSeat !== null) {
+    seat = g.turnSeat;
+    ms = PLAY_MS;
+  } else if (g.phase === "auction" && g.auctionTurnSeat !== null) {
+    seat = g.auctionTurnSeat;
+    ms = BID_MS;
+  }
+
+  if (seat === null) {
+    g.turnDeadline = null; // pause / lobby / round over — no clock
+    return;
+  }
+
+  g.turnDeadline = Date.now() + ms;
+  const actor = seat;
+  const phase = g.phase;
+  const timer = setTimeout(() => {
+    turnTimers.delete(roomId);
+    const cur = games.get(roomId);
+    if (!cur || cur !== g) return;
+    const stillTheirTurn =
+      (phase === "playing" && cur.phase === "playing" && cur.turnSeat === actor) ||
+      (phase === "auction" && cur.phase === "auction" && cur.auctionTurnSeat === actor);
+    if (stillTheirTurn) {
+      try {
+        autoMove(cur, actor);
+      } catch {
+        /* ignore — state moved on */
+      }
+    }
+    armTurnTimer(roomId);
+    broadcast(roomId);
+    scheduleAdvanceIfNeeded(roomId);
+  }, ms);
+  turnTimers.set(roomId, timer);
+}
 
 // After a trick completes the game pauses (turnSeat === null). Wait ~1s so
 // everyone sees all four cards, then advance to the next trick / round.
@@ -63,6 +124,7 @@ function scheduleAdvanceIfNeeded(roomId: string) {
     const cur = games.get(roomId);
     if (cur && cur === g) {
       advanceTrick(cur);
+      armTurnTimer(roomId);
       broadcast(roomId);
     }
   }, 1000);
@@ -149,6 +211,7 @@ wss.on("connection", (ws, req) => {
     }
     try {
       handle(g, conn.id, msg);
+      armTurnTimer(roomId);
       broadcast(roomId);
       scheduleAdvanceIfNeeded(roomId);
     } catch (err) {
@@ -164,9 +227,11 @@ wss.on("connection", (ws, req) => {
     set?.delete(conn);
     if (set && set.size === 0) {
       // Everyone left: drop the room so memory is freed / a fresh game starts.
+      clearTurnTimer(roomId);
       games.delete(roomId);
       roomConns.delete(roomId);
     } else {
+      armTurnTimer(roomId);
       broadcast(roomId);
     }
   });

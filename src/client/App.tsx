@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { useGame } from "./net";
-import { cardLabel, SUIT_LABEL, SUIT_NAME } from "../../shared/deck";
+import { cardEq, cardLabel, SUIT_LABEL, SUIT_NAME } from "../../shared/deck";
 import { Card, ClientView, Suit, SUITS, teamOfSeat } from "../../shared/types";
 import {
   isMuted,
@@ -210,10 +210,14 @@ function Header({ view, roomId }: { view: ClientView; roomId: string }) {
         {view.round > 0 && <span className="chip">Round {view.round}</span>}
         {view.trump && (
           <span className={`chip suit-${view.trump}`}>
-            Trump {SUIT_LABEL[view.trump]}
+            Ruung {SUIT_LABEL[view.trump]} {SUIT_NAME[view.trump]}
           </span>
         )}
-        {view.contract && <span className="chip">Contract {view.contract}</span>}
+        {view.contract && view.contractSeat !== null && (
+          <span className="chip">
+            {view.players[view.contractSeat].name} called {view.contract}
+          </span>
+        )}
         <span className="chip" title={`First to ${view.targetScore}`}>
           Us {view.matchScore[youTeam(view)]} · Them {view.matchScore[oppTeam(view)]} / {view.targetScore}
         </span>
@@ -371,6 +375,17 @@ function Auction({
       <div className="table-info">
         <span className="chip">Round {view.round}</span>
         <span className="chip">Bidding — one call each</span>
+        {view.auctionTurnSeat !== null && view.turnMsLeft != null && (
+          <TurnClock
+            key={`bid-${view.round}-${view.auctionTurnSeat}`}
+            msLeft={view.turnMsLeft}
+            label={
+              view.auctionTurnSeat === view.youSeat
+                ? "your bid"
+                : `${view.players[view.auctionTurnSeat].name} bidding`
+            }
+          />
+        )}
       </div>
 
       <PlayerRing
@@ -511,6 +526,27 @@ function Play({
   const isLegal = (c: Card) =>
     !view.legalCards || view.legalCards.some((l) => l.suit === c.suit && l.rank === c.rank);
 
+  // ---- Pre-moves: queue a card while it's not your turn; it auto-plays the
+  // instant your turn arrives (if still legal), so you never have to wait.
+  const [premove, setPremove] = useState<Card | null>(null);
+  useEffect(() => {
+    if (!yourTurn || !premove) return;
+    if (view.hand.some((c) => cardEq(c, premove)) && isLegal(premove)) {
+      send({ type: "playCard", card: premove });
+    }
+    setPremove(null); // played, or no longer legal — clear either way
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [yourTurn, premove]);
+  // Drop a queued card if you no longer hold it (e.g. it was auto-played).
+  useEffect(() => {
+    if (premove && !view.hand.some((c) => cardEq(c, premove))) setPremove(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view.hand]);
+
+  // Warn when your Ace would be "dead" (you played an Ace last trick too).
+  const youAcedLast =
+    view.lastTrick?.plays.find((p) => p.seat === view.youSeat)?.card.rank === 14;
+
   // Keep the finished trick on the table until the next card is played, so the
   // winning card is visible instead of vanishing the instant the 4th card lands.
   const showingLast = view.currentTrick.length === 0 && !!view.lastTrick;
@@ -552,8 +588,21 @@ function Play({
         {isWasted(view.trickNumber) && <span className="chip warn">Wasted round</span>}
         {view.trickNumber === 12 && <span className="chip warn">Can’t clinch on 12</span>}
         {view.trickNumber === 13 && <span className="chip warn">Last trick — winner takes all</span>}
-        {view.trump && <span className={`chip suit-${view.trump}`}>Trump {SUIT_LABEL[view.trump]}</span>}
+        {view.trump && <span className={`chip suit-${view.trump}`}>Ruung {SUIT_LABEL[view.trump]}</span>}
+        {view.turnSeat !== null && view.turnMsLeft != null && (
+          <TurnClock
+            key={`play-${view.trickNumber}-${view.turnSeat}`}
+            msLeft={view.turnMsLeft}
+            label={
+              view.turnSeat === view.youSeat
+                ? "your turn"
+                : `${view.players[view.turnSeat].name}’s turn`
+            }
+          />
+        )}
       </div>
+
+      <ContractBanner view={view} />
 
       <PlayerRing
         view={view}
@@ -567,19 +616,44 @@ function Play({
 
       <div className="hand-wrap">
         <div className="hand-title">
-          {yourTurn ? <strong className="turn-flag">Your turn — play a card</strong> : "Your hand"}
+          {yourTurn ? (
+            <strong className="turn-flag">Your turn — play a card</strong>
+          ) : (
+            <span>
+              Your hand{" "}
+              <span className="small muted">· tap a card to pre-move (auto-plays on your turn)</span>
+            </span>
+          )}
         </div>
+        {yourTurn && youAcedLast && (
+          <p className="small warn-text">
+            ⚠ You played an Ace last trick — another Ace now counts as the weakest card.
+          </p>
+        )}
+        {!yourTurn && premove && (
+          <p className="small premove-note">
+            Pre-move set: <strong>{cardLabel(premove)}</strong> — plays automatically on your turn.{" "}
+            <button className="btn tiny" onClick={() => setPremove(null)}>
+              Cancel
+            </button>
+          </p>
+        )}
         <div className="hand">
           {view.hand.map((c) => {
             const legal = yourTurn && isLegal(c);
+            const isPre = !!premove && cardEq(premove, c);
             return (
               <button
                 key={`${c.suit}${c.rank}`}
                 className={`playing-card big ${suitColor(c.suit)} ${legal ? "playable" : ""} ${
                   yourTurn && !legal ? "dimmed" : ""
-                }`}
-                disabled={!legal}
-                onClick={() => send({ type: "playCard", card: c })}
+                } ${isPre ? "premoved" : ""}`}
+                disabled={yourTurn && !legal}
+                onClick={() =>
+                  yourTurn
+                    ? send({ type: "playCard", card: c })
+                    : setPremove((prev) => (prev && cardEq(prev, c) ? null : c))
+                }
               >
                 <span className="pc-rank">{cardLabel(c).slice(0, -1)}</span>
                 <span className="pc-suit">{SUIT_LABEL[c.suit]}</span>
@@ -769,6 +843,47 @@ function BigWin({ kind, points }: { kind: string; points: number }) {
 // ---------------------------------------------------------------------------
 //  Small pieces
 // ---------------------------------------------------------------------------
+
+// A live countdown for the player on the clock. Keyed by the turn so it remounts
+// (and restarts) whenever the active seat changes; it counts down locally from
+// the ms-remaining the server sent, so it stays smooth between broadcasts.
+function TurnClock({ msLeft, label }: { msLeft: number; label: string }) {
+  const endRef = useRef(Date.now() + msLeft);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 200);
+    return () => clearInterval(id);
+  }, []);
+  const remaining = Math.max(0, endRef.current - now);
+  const secs = Math.ceil(remaining / 1000);
+  const urgent = remaining <= 4000;
+  return (
+    <span className={`chip turn-clock ${urgent ? "urgent" : ""}`}>
+      ⏱ {secs}s · {label}
+    </span>
+  );
+}
+
+// Big, unambiguous banner naming who called and which suit is Ruung (trump).
+function ContractBanner({ view }: { view: ClientView }) {
+  if (view.contract === null || view.trump === null || view.contractSeat === null) return null;
+  const seat = view.contractSeat;
+  const weCalled = teamOfSeat(seat) === youTeam(view);
+  return (
+    <div className={`contract-banner suit-${view.trump} ${weCalled ? "ours" : "theirs"}`}>
+      <span className="cb-suit">{SUIT_LABEL[view.trump]}</span>
+      <span className="cb-text">
+        <strong>{view.players[seat].name}</strong>
+        {seat === view.youSeat ? " (you)" : ""} · {weCalled ? "your team" : "opponents"} called{" "}
+        <strong>{view.contract}</strong>
+        <br />
+        <span className={`cb-ruung suit-${view.trump}`}>
+          {SUIT_NAME[view.trump]} {SUIT_LABEL[view.trump]} is Ruung (trump)
+        </span>
+      </span>
+    </div>
+  );
+}
 
 function YourHand({ cards, title }: { cards: Card[]; title: string }) {
   return (
