@@ -13,6 +13,7 @@ import {
   chatSend,
   createGame,
   disconnect,
+  HOST_GRACE_MS,
   joinGame,
   newSeries,
   nextRound,
@@ -58,10 +59,14 @@ interface TurnTimer {
   phase: GameState["phase"];
 }
 const turnTimers = new Map<string, TurnTimer>();
+const hostGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 // How long each player has to act before the server moves for them.
 const PLAY_MS = 10_000; // 10s to play a card
 const BID_MS = 20_000; // 20s to bid / pass
+// How long a dropped host has to come back before the room closes
+// (overridable so tests don't have to wait the full 20s).
+const GRACE_MS = Number(process.env.RUUNG_HOST_GRACE_MS) || HOST_GRACE_MS;
 
 function clearTurnTimer(roomId: string) {
   const t = turnTimers.get(roomId);
@@ -69,6 +74,52 @@ function clearTurnTimer(roomId: string) {
     clearTimeout(t.timer);
     turnTimers.delete(roomId);
   }
+}
+
+function clearHostGrace(roomId: string) {
+  const t = hostGraceTimers.get(roomId);
+  if (t) {
+    clearTimeout(t);
+    hostGraceTimers.delete(roomId);
+  }
+}
+
+/** Tear the room down: tell everyone still connected, close them, forget it. */
+function closeRoom(roomId: string, message: string) {
+  clearTurnTimer(roomId);
+  clearHostGrace(roomId);
+  const closed: ServerMessage = { type: "roomClosed", message };
+  for (const c of roomConns.get(roomId) ?? []) {
+    if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(closed));
+    c.ws.close();
+  }
+  games.delete(roomId);
+  roomConns.delete(roomId);
+}
+
+// The host dropped: hold the room open for HOST_GRACE_MS so a refresh or a
+// network blip doesn't end everyone's game. Cancelled the moment they return
+// (joinGame clears hostGraceUntil), otherwise the room closes.
+function syncHostGraceTimer(roomId: string) {
+  const g = games.get(roomId);
+  if (!g) return;
+  const pending = hostGraceTimers.get(roomId);
+
+  if (g.hostGraceUntil === null) {
+    if (pending) clearHostGrace(roomId); // host is back (or never left)
+    return;
+  }
+  if (pending) return; // already counting down
+
+  const ms = Math.max(0, g.hostGraceUntil - Date.now());
+  const timer = setTimeout(() => {
+    hostGraceTimers.delete(roomId);
+    const cur = games.get(roomId);
+    if (!cur || cur !== g) return;
+    if (cur.hostConnId !== null) return; // the host made it back
+    closeRoom(roomId, "The host left — this room has closed.");
+  }, ms);
+  hostGraceTimers.set(roomId, timer);
 }
 
 // Arm (or re-arm) the countdown for whoever must act now. Sets g.turnDeadline so
@@ -227,6 +278,7 @@ wss.on("connection", (ws, req) => {
     }
     try {
       handle(g, conn.id, msg);
+      syncHostGraceTimer(roomId);
       armTurnTimer(roomId);
       broadcast(roomId);
       scheduleAdvanceIfNeeded(roomId);
@@ -238,36 +290,24 @@ wss.on("connection", (ws, req) => {
   });
 
   ws.on("close", () => {
-    const wasHost = g.hostConnId === conn.id;
-    disconnect(g, conn.id);
+    disconnect(g, conn.id, GRACE_MS); // opens the grace window if this was the host
     const set = roomConns.get(roomId);
     set?.delete(conn);
 
-    if (wasHost) {
-      // The host leaving ends the room for everyone still in it.
+    if (set && set.size === 0) {
+      // Everyone left: drop the room so memory is freed / a fresh game starts.
       clearTurnTimer(roomId);
-      const closedMsg: ServerMessage = {
-        type: "roomClosed",
-        message: "The host left — this room has closed.",
-      };
-      for (const c of set ?? []) {
-        if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(closedMsg));
-        c.ws.close();
-      }
+      clearHostGrace(roomId);
       games.delete(roomId);
       roomConns.delete(roomId);
       return;
     }
 
-    if (set && set.size === 0) {
-      // Everyone left: drop the room so memory is freed / a fresh game starts.
-      clearTurnTimer(roomId);
-      games.delete(roomId);
-      roomConns.delete(roomId);
-    } else {
-      armTurnTimer(roomId);
-      broadcast(roomId);
-    }
+    // If that was the host, everyone else now sees a countdown instead of
+    // being kicked immediately.
+    syncHostGraceTimer(roomId);
+    armTurnTimer(roomId);
+    broadcast(roomId);
   });
 });
 

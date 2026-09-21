@@ -87,6 +87,8 @@ export interface ClientView {
   youSeat: number | null; // null if you are a spectator / not seated
   isHost: boolean; // true if YOU are the host (created the room; only you can start it)
   hostSeat: number | null; // which seat the host currently occupies (for everyone to see)
+  hostName: string | null; // the host's name (still shown while they are away)
+  hostGraceMsLeft?: number | null; // counting down: host dropped, room closes at 0 unless they return
   players: PlayerPublic[];
   spectators: string[]; // names of connected, unseated watchers
   chat: ChatMessage[];

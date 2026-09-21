@@ -29,6 +29,8 @@ export interface GameState {
   phase: ClientView["phase"];
   round: number;
   hostConnId: string | null; // the connId of whoever created the room; only they may start it
+  hostName: string; // remembered so a reconnecting host can be recognised
+  hostGraceUntil: number | null; // set when the host drops: room closes at this time unless they return
   seats: SeatState[]; // length 4
   hands: Card[][]; // by seat
   deck: Card[]; // leftover during a deal
@@ -81,6 +83,8 @@ export function createGame(roomId: string): GameState {
     phase: "lobby",
     round: 0,
     hostConnId: null,
+    hostName: "",
+    hostGraceUntil: null,
     seats: [emptySeat(), emptySeat(), emptySeat(), emptySeat()],
     hands: [[], [], [], []],
     deck: [],
@@ -128,8 +132,21 @@ export function joinGame(g: GameState, connId: string, rawName: string): number 
   const name = (rawName || "Player").trim().slice(0, 16) || "Player";
 
   // Whoever's join message the server processes first owns the room — only
-  // they can start the game, and the room closes if they leave.
-  if (g.hostConnId === null) g.hostConnId = connId;
+  // they can start the game, and the room closes if they leave. If the host
+  // dropped, we hold the room open for HOST_GRACE_MS: during that window only
+  // the host (matched by name) can reclaim it, so a refresh doesn't kill the
+  // room and nobody else can quietly take it over.
+  if (g.hostConnId === null) {
+    const graceOpen = g.hostGraceUntil !== null && Date.now() < g.hostGraceUntil;
+    if (!graceOpen) {
+      g.hostConnId = connId; // brand-new room
+      g.hostGraceUntil = null;
+    } else if (g.hostName && g.hostName.toLowerCase() === name.toLowerCase()) {
+      g.hostConnId = connId; // the host came back in time
+      g.hostGraceUntil = null;
+    }
+  }
+  if (g.hostConnId === connId) g.hostName = name; // keep the host's name current
 
   // Already seated on this connection?
   const existing = seatOfConn(g, connId);
@@ -212,8 +229,19 @@ export function takeSeat(g: GameState, connId: string, seat: number) {
   g.seats[cur] = tmp; // if the target was empty this just moves; otherwise it swaps
 }
 
-export function disconnect(g: GameState, connId: string) {
+/** How long the room is held open for a dropped host to come back. */
+export const HOST_GRACE_MS = 20_000;
+
+export function disconnect(g: GameState, connId: string, graceMs = HOST_GRACE_MS) {
   delete g.spectatorNames[connId];
+
+  // The host dropping starts the grace countdown rather than ending the room
+  // outright — a refresh or a blip shouldn't kick everyone out.
+  if (g.hostConnId === connId) {
+    g.hostConnId = null;
+    g.hostGraceUntil = Date.now() + graceMs;
+  }
+
   const seat = seatOfConn(g, connId);
   if (seat === null) return;
   g.seats[seat].connected = false;
@@ -574,6 +602,9 @@ export function viewFor(g: GameState, connId: string): ClientView {
     youSeat,
     isHost: g.hostConnId === connId,
     hostSeat: hostSeatIdx === -1 ? null : hostSeatIdx,
+    hostName: g.hostName || null,
+    hostGraceMsLeft:
+      g.hostGraceUntil !== null ? Math.max(0, g.hostGraceUntil - Date.now()) : null,
     players: g.seats.map((s, seat) => ({
       seat,
       name: s.name,

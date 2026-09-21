@@ -190,6 +190,10 @@ function Game({
       <Header view={view} roomId={roomId} />
       {error && <div className="toast">{error}</div>}
 
+      {view.hostGraceMsLeft != null && (
+        <HostGraceBar msLeft={view.hostGraceMsLeft} hostName={view.hostName} />
+      )}
+
       {spectating && (
         <div className="spectator-bar">
           👀 You’re spectating — you can see everyone’s cards and chat. Grab a free
@@ -935,6 +939,24 @@ function TurnClock({ msLeft, label }: { msLeft: number; label: string }) {
     <span className={`chip turn-clock ${urgent ? "urgent" : ""}`}>
       ⏱ {secs}s · {label}
     </span>
+  );
+}
+
+// Shown to everyone else while the host is away: the room is held open for a
+// short grace period so a refresh or a blip doesn't end the game.
+function HostGraceBar({ msLeft, hostName }: { msLeft: number; hostName: string | null }) {
+  const endRef = useRef(Date.now() + msLeft);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, []);
+  const secs = Math.ceil(Math.max(0, endRef.current - now) / 1000);
+  return (
+    <div className="host-grace-bar">
+      ⏳ <strong>{hostName || "The host"}</strong> disconnected — waiting {secs}s for them to
+      come back, or the room closes.
+    </div>
   );
 }
 
