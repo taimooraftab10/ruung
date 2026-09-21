@@ -22,7 +22,8 @@ import { RoundKind, ScoreState, Team, TrickResult } from "./types";
  *  Rule 5 — Seniority / "consecutive 2" as an ON-BOARD pile:
  *      Think of every played trick as sitting "on the board" until someone
  *      claims it. Seniority is PER PLAYER: the SAME player must win TWO
- *      CONSECUTIVE tricks (earliest = 4th & 5th) to CLINCH, which sweeps ALL
+ *      CONSECUTIVE tricks (earliest = 4th & 5th, so the earliest trick a
+ *      clinch can LAND on is the 5th) to CLINCH, which sweeps ALL
  *      tricks currently on the board to that player's team. (Partner winning
  *      the next trick resets the streak — must be the same person twice.)
  *      While the streak continues, each further win sweeps the one new trick.
@@ -55,6 +56,12 @@ export const isWastedTrick = (trickNumber: number) => WASTED_TRICKS.has(trickNum
 // The first breakthrough (retroactively "winning all the rounds below") may not
 // complete on trick 12, though the streak still carries through it to trick 13.
 export const NO_CLINCH_TRICK = 12;
+
+// The earliest trick a clinch can land on. Tricks 1-3 are wasted, so the first
+// pair of consecutive wins that can break through is 4 & 5 — landing on 5.
+// Without this, winning the wasted trick 3 plus trick 4 would clinch on 4,
+// because wasted tricks still build the seniority streak.
+export const FIRST_CLINCH_TRICK = 5;
 
 /** A trick that can contribute to the score (not wasted; Ace only on trick 13). */
 export function isScoringWin(t: TrickResult): boolean {
@@ -96,7 +103,9 @@ export function computeScore(results: TrickResult[]): ScoreState {
     } else if (t.trickNumber === NO_CLINCH_TRICK) {
       canClinch = false; // trick 12 never clinches (streak still carries on)
     } else {
-      canClinch = s.streakLen >= 2 && isScoringWin(t); // 2-in-a-row; Ace/wasted don't clinch
+      // 2-in-a-row; Ace/wasted don't clinch; and never before trick 5.
+      canClinch =
+        t.trickNumber >= FIRST_CLINCH_TRICK && s.streakLen >= 2 && isScoringWin(t);
     }
 
     // ---- sweep everything still on the board to the winner's team ----------
