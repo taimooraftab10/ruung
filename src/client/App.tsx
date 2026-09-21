@@ -49,7 +49,16 @@ export function App() {
     );
   }
 
-  return <Game roomId={roomId} name={name} />;
+  return (
+    <Game
+      roomId={roomId}
+      name={name}
+      onLeave={() => {
+        window.location.hash = "";
+        setRoomId(null);
+      }}
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -108,9 +117,17 @@ function Landing({ onStart }: { onStart: (name: string, room: string) => void })
 //  Game screen
 // ---------------------------------------------------------------------------
 
-function Game({ roomId, name }: { roomId: string; name: string }) {
+function Game({
+  roomId,
+  name,
+  onLeave,
+}: {
+  roomId: string;
+  name: string;
+  onLeave: () => void;
+}) {
   const net = useGame(roomId, name);
-  const { view, error, connected } = net;
+  const { view, error, connected, roomClosed } = net;
   const wasYourTurn = useRef(false);
   const cardsPlayed = useRef(0);
 
@@ -143,6 +160,20 @@ function Game({ roomId, name }: { roomId: string; name: string }) {
     const t = setTimeout(net.clearError, 3500);
     return () => clearTimeout(t);
   }, [error]);
+
+  if (roomClosed) {
+    return (
+      <div className="screen center">
+        <div className="card-panel landing">
+          <h1 className="logo">Room closed</h1>
+          <p className="muted">{roomClosed}</p>
+          <button className="btn primary big" onClick={onLeave}>
+            Back to home
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!view) {
     return (
@@ -286,6 +317,7 @@ function Lobby({
         <span className="ls-name">
           {occupied ? p.name : <em className="muted">empty</em>}
           {isYou && " (you)"}
+          {occupied && seat === view.hostSeat && " 👑"}
           {occupied && !p.connected && " ⚠"}
         </span>
         {canAct && (
@@ -349,11 +381,21 @@ function Lobby({
 
       <button
         className="btn primary big"
-        disabled={seated < 4}
+        disabled={seated < 4 || !view.isHost}
         onClick={() => send({ type: "startGame" })}
       >
-        {seated < 4 ? `Waiting for ${4 - seated} more…` : `Start · first to ${view.targetScore}`}
+        {seated < 4
+          ? `Waiting for ${4 - seated} more…`
+          : view.isHost
+            ? `Start · first to ${view.targetScore}`
+            : "Waiting for the host to start…"}
       </button>
+      {seated >= 4 && !view.isHost && (
+        <p className="muted small center-text">
+          👑 Only the host ({view.hostSeat !== null ? view.players[view.hostSeat].name : "?"}) can
+          start the game.
+        </p>
+      )}
     </div>
   );
 }

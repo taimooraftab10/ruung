@@ -12,6 +12,7 @@ export interface Net {
   view: ClientView | null;
   error: string | null;
   connected: boolean;
+  roomClosed: string | null; // set once the host has ended the room
   send: (msg: ClientMessage) => void;
   clearError: () => void;
 }
@@ -20,12 +21,14 @@ export function useGame(roomId: string | null, name: string | null): Net {
   const [view, setView] = useState<ClientView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
+  const [roomClosed, setRoomClosed] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     if (!roomId || !name) return;
 
     let closed = false;
+    let doneForGood = false; // the room closed for good — never reconnect
     let retry = 0;
     let reconnectTimer: ReturnType<typeof setTimeout>;
 
@@ -42,10 +45,14 @@ export function useGame(roomId: string | null, name: string | null): Net {
         const msg = JSON.parse(e.data as string) as ServerMessage;
         if (msg.type === "view") setView(msg.view);
         else if (msg.type === "error") setError(msg.message);
+        else if (msg.type === "roomClosed") {
+          doneForGood = true;
+          setRoomClosed(msg.message);
+        }
       };
       ws.onclose = () => {
         setConnected(false);
-        if (closed) return;
+        if (closed || doneForGood) return;
         retry += 1;
         const delay = Math.min(1000 * retry, 5000);
         reconnectTimer = setTimeout(connect, delay);
@@ -67,12 +74,13 @@ export function useGame(roomId: string | null, name: string | null): Net {
       view,
       error,
       connected,
+      roomClosed,
       send: (msg: ClientMessage) => {
         const ws = wsRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
       },
       clearError: () => setError(null),
     }),
-    [view, error, connected],
+    [view, error, connected, roomClosed],
   );
 }

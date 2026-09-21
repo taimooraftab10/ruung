@@ -960,6 +960,9 @@ input:focus {
   color: #ffd2cc;
   font-weight: 600;
 }
+.center-text {
+  text-align: center;
+}
 
 /* ---- Spectating ---- */
 .spectator-bar {

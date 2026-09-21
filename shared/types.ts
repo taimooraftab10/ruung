@@ -85,6 +85,8 @@ export interface ClientView {
   roomId: string;
   round: number;
   youSeat: number | null; // null if you are a spectator / not seated
+  isHost: boolean; // true if YOU are the host (created the room; only you can start it)
+  hostSeat: number | null; // which seat the host currently occupies (for everyone to see)
   players: PlayerPublic[];
   spectators: string[]; // names of connected, unseated watchers
   chat: ChatMessage[];
@@ -164,4 +166,5 @@ export type ClientMessage =
 
 export type ServerMessage =
   | { type: "view"; view: ClientView }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "roomClosed"; message: string };

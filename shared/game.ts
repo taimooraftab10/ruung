@@ -28,6 +28,7 @@ export interface GameState {
   roomId: string;
   phase: ClientView["phase"];
   round: number;
+  hostConnId: string | null; // the connId of whoever created the room; only they may start it
   seats: SeatState[]; // length 4
   hands: Card[][]; // by seat
   deck: Card[]; // leftover during a deal
@@ -79,6 +80,7 @@ export function createGame(roomId: string): GameState {
     roomId,
     phase: "lobby",
     round: 0,
+    hostConnId: null,
     seats: [emptySeat(), emptySeat(), emptySeat(), emptySeat()],
     hands: [[], [], [], []],
     deck: [],
@@ -124,6 +126,10 @@ export function seatOfConn(g: GameState, connId: string): number | null {
 /** Join or reclaim a seat. Returns the seat index, or null if the table is full. */
 export function joinGame(g: GameState, connId: string, rawName: string): number | null {
   const name = (rawName || "Player").trim().slice(0, 16) || "Player";
+
+  // Whoever's join message the server processes first owns the room — only
+  // they can start the game, and the room closes if they leave.
+  if (g.hostConnId === null) g.hostConnId = connId;
 
   // Already seated on this connection?
   const existing = seatOfConn(g, connId);
@@ -222,8 +228,9 @@ const seatedCount = (g: GameState) => g.seats.filter((s) => s.connId !== null).l
 //  Start / rounds
 // ---------------------------------------------------------------------------
 
-export function startGame(g: GameState) {
+export function startGame(g: GameState, connId: string) {
   if (g.phase !== "lobby") throw new GameError("Game already started.");
+  if (g.hostConnId !== connId) throw new GameError("Only the host can start the game.");
   if (seatedCount(g) < 4) throw new GameError("Need 4 players to start.");
 
   g.round = 1;
@@ -409,15 +416,13 @@ function beats(a: Card, best: Card, trump: Suit | null, leadSuit: Suit): boolean
 }
 
 // Rule: an Ace played in TWO consecutive tricks by the SAME player is "dead" —
-// the second Ace counts as the WEAKEST card in that trick, so the highest of the
-// other three wins instead. We detect it by looking at the immediately previous
-// trick's plays (g.lastTrick still holds them here, before we overwrite it).
+// but only when that player was made SENIOR by the first Ace, i.e. they WON
+// the previous trick with it. If someone else won the previous trick (you
+// weren't senior), your Ace last time doesn't taint this one — it's fully live.
 function isDeadAce(g: GameState, play: PlayedCard): boolean {
   if (play.card.rank !== ACE) return false;
-  const prev = g.lastTrick?.plays;
-  if (!prev) return false; // first trick — nothing before it
-  const before = prev.find((p) => p.seat === play.seat);
-  return !!before && before.card.rank === ACE;
+  const prev = g.trickResults[g.trickResults.length - 1];
+  return !!prev && prev.winnerSeat === play.seat && prev.wonByAce;
 }
 
 function completeTrick(g: GameState) {
@@ -560,12 +565,15 @@ export function autoMove(g: GameState, seat: number) {
 
 export function viewFor(g: GameState, connId: string): ClientView {
   const youSeat = seatOfConn(g, connId);
+  const hostSeatIdx = g.seats.findIndex((s) => s.connId !== null && s.connId === g.hostConnId);
 
   const view: ClientView = {
     phase: g.phase,
     roomId: g.roomId,
     round: g.round,
     youSeat,
+    isHost: g.hostConnId === connId,
+    hostSeat: hostSeatIdx === -1 ? null : hostSeatIdx,
     players: g.seats.map((s, seat) => ({
       seat,
       name: s.name,

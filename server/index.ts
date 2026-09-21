@@ -24,7 +24,7 @@ import {
   takeSeat,
   viewFor,
 } from "../shared/game";
-import { ClientMessage } from "../shared/types";
+import { ClientMessage, ServerMessage } from "../shared/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.join(__dirname, "..", "dist");
@@ -180,7 +180,7 @@ function handle(g: GameState, connId: string, msg: ClientMessage) {
       newSeries(g);
       break;
     case "startGame":
-      startGame(g);
+      startGame(g, connId);
       break;
     case "bid":
       if (seat === null) throw new GameError("You are not seated.");
@@ -238,9 +238,27 @@ wss.on("connection", (ws, req) => {
   });
 
   ws.on("close", () => {
+    const wasHost = g.hostConnId === conn.id;
     disconnect(g, conn.id);
     const set = roomConns.get(roomId);
     set?.delete(conn);
+
+    if (wasHost) {
+      // The host leaving ends the room for everyone still in it.
+      clearTurnTimer(roomId);
+      const closedMsg: ServerMessage = {
+        type: "roomClosed",
+        message: "The host left — this room has closed.",
+      };
+      for (const c of set ?? []) {
+        if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(closedMsg));
+        c.ws.close();
+      }
+      games.delete(roomId);
+      roomConns.delete(roomId);
+      return;
+    }
+
     if (set && set.size === 0) {
       // Everyone left: drop the room so memory is freed / a fresh game starts.
       clearTurnTimer(roomId);
